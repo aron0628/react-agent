@@ -14,6 +14,7 @@ dependencies = [
     "langchain-openai>=0.3.35",
     "langchain-tavily>=0.2.12",
     "langchain>=0.3.27",
+    "langgraph-checkpoint-postgres>=3.0.0,<4.0.0",
 ]
 
 
@@ -62,4 +63,5 @@ convention = "google"
 dev = [
     "langgraph-cli[inmem]>=0.1.71",
     "pytest>=8.3.5",
+    "pytest-asyncio>=0.24.0",
 ]

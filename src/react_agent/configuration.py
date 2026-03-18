@@ -37,6 +37,20 @@ class Configuration:
         },
     )
 
+    summarization_threshold: int = field(
+        default=20,
+        metadata={
+            "description": "Number of messages before triggering conversation summarization."
+        },
+    )
+
+    summarization_model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = (
+        field(
+            default="gpt-4.1-mini",
+            metadata={"description": "Model to use for conversation summarization."},
+        )
+    )
+
     @classmethod
     def from_runnable_config(cls, config: RunnableConfig) -> Configuration:
         """Create a Configuration instance from a RunnableConfig object."""

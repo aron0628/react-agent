@@ -53,6 +53,12 @@ class State(InputState):
     It is set to 'True' when the step count reaches recursion_limit - 1.
     """
 
+    summary: str = ""
+    """
+    Running summary of the conversation when messages exceed the summarization threshold.
+    Used to preserve context after older messages are trimmed.
+    """
+
     # Additional attributes can be added here as needed.
     # Common examples include:
     # retrieved_documents: List[Document] = field(default_factory=list)

@@ -3,19 +3,133 @@
 Works with a chat model with tool calling support.
 """
 
-import os
 from datetime import UTC, datetime
-from typing import Dict, List, Literal, cast
+from typing import Any, Dict, List, Literal, cast
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, RemoveMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
 
 from react_agent.configuration import Configuration
+from react_agent.db import (
+    create_thread_for_user,
+    create_user,
+    get_database_url,
+    update_thread_title,
+)
+from react_agent.prompts import SUMMARIZATION_PROMPT, TITLE_PROMPT
 from react_agent.state import InputState, State
 from react_agent.tools import TOOLS
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+_admin_initialized = False
+_db_url: str | None = None
+
+
+async def ensure_admin_user(
+    state: State, config: RunnableConfig
+) -> dict[str, Any]:
+    """Ensure admin user and current thread exist in the database.
+
+    Creates admin user on first invocation, and registers the current
+    thread_id for the admin user on every invocation.
+
+    Args:
+        state: The current conversation state.
+        config: Configuration for the model run.
+
+    Returns:
+        dict: Always returns empty dict (no state changes).
+    """
+    global _admin_initialized, _db_url  # noqa: PLW0603
+
+    # 1) First call: create admin user (tables must exist beforehand)
+    if not _admin_initialized:
+        try:
+            _db_url = get_database_url()
+            await create_user(_db_url, "admin", "Admin")
+            _admin_initialized = True
+            logger.info("Admin user initialized successfully")
+        except Exception:
+            logger.exception("Failed to initialize admin user")
+            _db_url = None
+            _admin_initialized = True
+            return {}
+
+    # 2) Every call: register thread for admin user
+    if _db_url:
+        try:
+            configurable = config.get("configurable") or {}
+            thread_id = configurable.get("thread_id", "")
+            if thread_id:
+                await create_thread_for_user(_db_url, "admin", thread_id)
+        except Exception:
+            logger.exception("Failed to register thread")
+
+    return {}
+
+
+async def summarize_conversation(
+    state: State, config: RunnableConfig
+) -> dict[str, Any]:
+    """Conditionally summarize conversation when message count exceeds threshold.
+
+    If the number of messages exceeds the configured threshold, this node
+    summarizes older messages and removes them from state using RemoveMessage.
+    The summary is stored in state.summary and prepended to the system prompt.
+
+    Args:
+        state: The current conversation state.
+        config: Configuration for the model run.
+
+    Returns:
+        dict: Empty dict if below threshold, or summary + RemoveMessage list.
+    """
+    configuration = Configuration.from_runnable_config(config)
+
+    if len(state.messages) <= configuration.summarization_threshold:
+        return {}
+
+    # Format messages for summarization (exclude last 2)
+    messages_to_summarize = state.messages[:-2]
+    conversation_text = "\n".join(
+        f"{getattr(m, 'type', 'unknown')}: {getattr(m, 'content', '')}"
+        for m in messages_to_summarize
+        if getattr(m, "content", "")
+    )
+
+    # Call LLM for summarization
+    llm = ChatOpenAI(
+        temperature=0,
+        model=configuration.summarization_model,
+    )
+    summary_response = await llm.ainvoke(
+        SUMMARIZATION_PROMPT.format(conversation=conversation_text)
+    )
+    summary_content = (
+        summary_response.content
+        if isinstance(summary_response.content, str)
+        else str(summary_response.content)
+    )
+
+    # If there's an existing summary, include it for context
+    if state.summary:
+        summary_content = (
+            f"Previous summary: {state.summary}\n\nUpdated summary: {summary_content}"
+        )
+
+    # Remove old messages and return new summary
+    delete_messages = [
+        RemoveMessage(id=m.id) for m in messages_to_summarize if m.id is not None
+    ]
+    return {"summary": summary_content, "messages": delete_messages}
+
 
 # Define the function that calls the model
 
@@ -49,6 +163,12 @@ async def call_model(
         system_time=datetime.now(tz=UTC).isoformat()
     )
 
+    # Prepend conversation summary if available
+    if state.summary:
+        system_message = (
+            f"Summary of earlier conversation:\n{state.summary}\n\n{system_message}"
+        )
+
     # Get the model's response
     response = cast(
         AIMessage,
@@ -68,21 +188,32 @@ async def call_model(
             ]
         }
 
+    # Generate thread title from first user message (once per thread)
+    if _db_url and not response.tool_calls:
+        try:
+            from langchain_core.messages import HumanMessage
+
+            human_msgs = [m for m in state.messages if isinstance(m, HumanMessage)]
+            if len(human_msgs) == 1:
+                configurable = config.get("configurable") or {}
+                thread_id = configurable.get("thread_id", "")
+                if thread_id:
+                    title_llm = ChatOpenAI(
+                        temperature=0,
+                        model=configuration.summarization_model,
+                    )
+                    title_response = await title_llm.ainvoke(
+                        [{"role": "user", "content": TITLE_PROMPT.format(
+                            message=human_msgs[0].content
+                        )}]
+                    )
+                    title = str(title_response.content).strip()[:50]
+                    await update_thread_title(_db_url, thread_id, title)
+        except Exception:
+            logger.exception("Failed to generate thread title")
+
     # Return the model's response as a list to be added to existing messages
     return {"messages": [response]}
-
-
-# Define a new graph
-
-builder = StateGraph(State, input=InputState, config_schema=Configuration)
-
-# Define the two nodes we will cycle between
-builder.add_node(call_model)
-builder.add_node("tools", ToolNode(TOOLS))
-
-# Set the entrypoint as `call_model`
-# This means that this node is the first one called
-builder.add_edge("__start__", "call_model")
 
 
 def route_model_output(state: State) -> Literal["__end__", "tools"]:
@@ -108,17 +239,39 @@ def route_model_output(state: State) -> Literal["__end__", "tools"]:
     return "tools"
 
 
-# Add a conditional edge to determine the next step after `call_model`
-builder.add_conditional_edges(
-    "call_model",
-    # After call_model finishes running, the next node(s) are scheduled
-    # based on the output from route_model_output
-    route_model_output,
-)
+def create_graph(
+    checkpointer: "BaseCheckpointSaver[Any] | None" = None,
+) -> Any:
+    """Create a compiled ReAct Agent graph.
 
-# Add a normal edge from `tools` to `call_model`
-# This creates a cycle: after using tools, we always return to the model
-builder.add_edge("tools", "call_model")
+    Args:
+        checkpointer: Optional checkpoint saver for state persistence.
+            When None, the graph runs without persistence (suitable for
+            langgraph dev which injects its own checkpointer).
 
-# Compile the builder into an executable graph
-graph = builder.compile(name="ReAct Agent")
+    Returns:
+        A compiled LangGraph graph.
+    """
+    builder = StateGraph(State, input=InputState, config_schema=Configuration)
+
+    builder.add_node(ensure_admin_user)
+    builder.add_node(summarize_conversation)
+    builder.add_node(call_model)
+    builder.add_node("tools", ToolNode(TOOLS))
+
+    builder.add_edge("__start__", "ensure_admin_user")
+    builder.add_edge("ensure_admin_user", "summarize_conversation")
+    builder.add_edge("summarize_conversation", "call_model")
+
+    builder.add_conditional_edges(
+        "call_model",
+        route_model_output,
+    )
+
+    builder.add_edge("tools", "call_model")
+
+    return builder.compile(checkpointer=checkpointer, name="ReAct Agent")
+
+
+# Module-level graph for langgraph.json backward compatibility
+graph = create_graph()

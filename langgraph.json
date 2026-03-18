@@ -3,5 +3,8 @@
   "graphs": {
     "agent": "./src/react_agent/graph.py:graph"
   },
+  "checkpointer": {
+    "path": "./src/react_agent/db.py:create_checkpointer"
+  },
   "env": ".env"
 }
