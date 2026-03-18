@@ -91,25 +91,6 @@ async def create_thread_for_user(
         await conn.commit()
 
 
-async def update_thread_title(db_url: str, thread_id: str, title: str) -> None:
-    """Update thread title only if currently empty.
-
-    Args:
-        db_url: PostgreSQL connection URL.
-        thread_id: The thread to update.
-        title: New title for the thread.
-    """
-    import psycopg
-
-    async with await psycopg.AsyncConnection.connect(db_url) as conn:
-        await conn.execute(
-            "UPDATE user_threads SET title = %s, updated_at = NOW() "
-            "WHERE thread_id = %s AND title = ''",
-            (title, thread_id),
-        )
-        await conn.commit()
-
-
 async def get_user_threads(db_url: str, user_id: str) -> list[dict[str, Any]]:
     """Get all conversation threads for a user.
 

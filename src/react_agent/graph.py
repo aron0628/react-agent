@@ -3,6 +3,8 @@
 Works with a chat model with tool calling support.
 """
 
+import logging
+import os
 from datetime import UTC, datetime
 from typing import Any, Dict, List, Literal, cast
 
@@ -18,13 +20,10 @@ from react_agent.db import (
     create_thread_for_user,
     create_user,
     get_database_url,
-    update_thread_title,
 )
 from react_agent.prompts import SUMMARIZATION_PROMPT, TITLE_PROMPT
 from react_agent.state import InputState, State
 from react_agent.tools import TOOLS
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +207,22 @@ async def call_model(
                         )}]
                     )
                     title = str(title_response.content).strip()[:50]
-                    await update_thread_title(_db_url, thread_id, title)
+
+                    # Write title to LangGraph thread metadata (single source of truth)
+                    try:
+                        import httpx
+
+                        langgraph_api_url = os.environ.get(
+                            "LANGGRAPH_API_URL", "http://localhost:2024"
+                        )
+                        async with httpx.AsyncClient() as http_client:
+                            await http_client.patch(
+                                f"{langgraph_api_url}/threads/{thread_id}",
+                                json={"metadata": {"title": title}},
+                                timeout=5.0,
+                            )
+                    except Exception:
+                        logger.exception("Failed to update LangGraph thread metadata")
         except Exception:
             logger.exception("Failed to generate thread title")
 
