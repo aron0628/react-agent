@@ -51,6 +51,60 @@ class Configuration:
         )
     )
 
+    embedding_model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = field(
+        default="solar-embedding-1-large",
+        metadata={
+            "description": "Upstage embedding model. "
+            "Auto-appends -query/-passage suffix."
+        },
+    )
+
+    embedding_dimensions: int = field(
+        default=4096,
+        metadata={
+            "description": "Embedding vector dimensions. "
+            "Must match the DB column (solar-embedding-1-large = 4096)."
+        },
+    )
+
+    rag_max_distance: float = field(
+        default=0.5,
+        metadata={
+            "description": "Max cosine distance for vector search "
+            "(pgvector <=>: 0=identical, 2=opposite). Lower is more similar."
+        },
+    )
+
+    rag_max_results: int = field(
+        default=5,
+        metadata={
+            "description": "Maximum number of documents to retrieve."
+        },
+    )
+
+    rag_max_rewrite_attempts: int = field(
+        default=1,
+        metadata={
+            "description": "Maximum query rewrite attempts when no relevant docs found."
+        },
+    )
+
+    rag_grading_model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = (
+        field(
+            default="gpt-4.1-mini",
+            metadata={
+                "description": "Model for batch document relevance grading."
+            },
+        )
+    )
+
+    rag_max_response_tokens: int = field(
+        default=4000,
+        metadata={
+            "description": "Token budget cap for retrieve_documents tool response."
+        },
+    )
+
     @classmethod
     def from_runnable_config(cls, config: RunnableConfig) -> Configuration:
         """Create a Configuration instance from a RunnableConfig object."""
