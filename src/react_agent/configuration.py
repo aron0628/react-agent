@@ -105,6 +105,30 @@ class Configuration:
         },
     )
 
+    enable_raptor: bool = field(
+        default=False,
+        metadata={
+            "description": "Enable 2-stage RAPTOR retrieval. "
+            "When enabled, searches raptor_summaries first, "
+            "then fetches leaf chunks by cluster indices."
+        },
+    )
+
+    raptor_max_distance: float = field(
+        default=0.6,
+        metadata={
+            "description": "Max cosine distance for RAPTOR summary search "
+            "(higher than leaf threshold since summaries are more abstract)."
+        },
+    )
+
+    raptor_top_k: int = field(
+        default=3,
+        metadata={
+            "description": "Max RAPTOR summary clusters to retrieve in Stage 1."
+        },
+    )
+
     @classmethod
     def from_runnable_config(cls, config: RunnableConfig) -> Configuration:
         """Create a Configuration instance from a RunnableConfig object."""

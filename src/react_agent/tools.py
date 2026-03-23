@@ -50,6 +50,8 @@ async def retrieve_documents(query: str) -> str:
         grade_documents,
         rewrite_query,
         search_documents,
+        search_leaf_chunks_by_indices,
+        search_raptor_summaries,
     )
 
     config = Configuration.from_context()
@@ -72,10 +74,71 @@ async def retrieve_documents(query: str) -> str:
                 "웹 검색을 시도해 보세요."
             )
 
-        # Vector search
-        results = await search_documents(
-            embedding, db_url, config.rag_max_results, config.rag_max_distance
-        )
+        # --- RAPTOR 2-stage retrieval ---
+        results: list[dict[str, Any]] = []
+
+        if config.enable_raptor:
+            try:
+                clusters = await search_raptor_summaries(
+                    embedding,
+                    db_url,
+                    config.raptor_top_k,
+                    config.raptor_max_distance,
+                )
+                logger.info("RAPTOR stage 1: found %d clusters", len(clusters))
+
+                if clusters:
+                    # Extract source_indices defensively
+                    indices_by_job: dict[str, set[int]] = {}
+                    for cluster in clusters:
+                        metadata = cluster.get("metadata")
+                        if isinstance(metadata, str):
+                            import json
+                            try:
+                                metadata = json.loads(metadata)
+                            except (json.JSONDecodeError, TypeError):
+                                metadata = {}
+                        if not isinstance(metadata, dict):
+                            metadata = {}
+                        source_indices = metadata.get("source_indices", [])
+                        valid_indices = [
+                            idx for idx in source_indices if isinstance(idx, int)
+                        ]
+                        if valid_indices:
+                            job_id = cluster.get("job_id", "")
+                            if job_id:
+                                indices_by_job.setdefault(job_id, set()).update(
+                                    valid_indices
+                                )
+
+                    # Fetch leaf chunks per job_id
+                    if indices_by_job:
+                        all_leaf_chunks: list[dict[str, Any]] = []
+                        for job_id, indices in indices_by_job.items():
+                            chunks = await search_leaf_chunks_by_indices(
+                                job_id, sorted(indices), db_url
+                            )
+                            all_leaf_chunks.extend(chunks)
+                        if all_leaf_chunks:
+                            results = all_leaf_chunks
+                            logger.info(
+                                "RAPTOR stage 2: fetched %d leaf chunks from %d indices",
+                                len(all_leaf_chunks),
+                                sum(len(v) for v in indices_by_job.values()),
+                            )
+            except Exception:
+                logger.warning(
+                    "RAPTOR search failed, falling back to leaf search",
+                    exc_info=True,
+                )
+
+        # Leaf fallback (also used when RAPTOR is disabled)
+        if not results:
+            if config.enable_raptor:
+                logger.info("RAPTOR fallback to leaf search")
+            results = await search_documents(
+                embedding, db_url, config.rag_max_results, config.rag_max_distance
+            )
 
         if not results:
             return "해당 문서에서 관련 내용을 찾지 못했습니다. 웹 검색을 시도해 보세요."

@@ -109,6 +109,96 @@ async def search_documents(
         return [dict(row) for row in rows]
 
 
+async def search_raptor_summaries(
+    query_embedding: list[float],
+    db_url: str,
+    top_k: int,
+    max_distance: float,
+) -> list[dict[str, Any]]:
+    """Search raptor_summaries table for relevant cluster summaries.
+
+    Uses pgvector cosine distance against pre-computed RAPTOR summaries.
+    Each summary represents a cluster of related leaf chunks.
+
+    Args:
+        query_embedding: The query embedding vector.
+        db_url: PostgreSQL connection URL.
+        top_k: Maximum number of summary clusters to return.
+        max_distance: Maximum cosine distance threshold.
+
+    Returns:
+        A list of summary dicts with job_id, raptor_level, cluster_id,
+        content, metadata (containing source_indices), and distance.
+    """
+    import psycopg
+    from psycopg.rows import dict_row  # type: ignore[import-not-found]
+
+    embedding_str = str(query_embedding)
+
+    sql = (
+        "SELECT rs.job_id, rs.raptor_level, rs.cluster_id, rs.content, "
+        "rs.metadata, (rs.embedding <=> %s::vector) AS distance "
+        "FROM raptor_summaries rs "
+        "WHERE (rs.embedding <=> %s::vector) < %s "
+        "ORDER BY distance ASC "
+        "LIMIT %s"
+    )
+
+    async with await psycopg.AsyncConnection.connect(
+        db_url, row_factory=dict_row
+    ) as conn:
+        cursor = await conn.execute(
+            sql, (embedding_str, embedding_str, max_distance, top_k)
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def search_leaf_chunks_by_indices(
+    job_id: str,
+    element_indices: list[int],
+    db_url: str,
+) -> list[dict[str, Any]]:
+    """Fetch specific leaf chunks by element indices from a RAPTOR cluster.
+
+    Retrieves document chunks that belong to a matched RAPTOR cluster,
+    identified by their element_index values from the cluster's
+    source_indices metadata.
+
+    Args:
+        job_id: The parsing job identifier.
+        element_indices: List of element_index values to retrieve.
+        db_url: PostgreSQL connection URL.
+
+    Returns:
+        A list of document dicts compatible with grade_documents() and
+        format_results(). Distance is set to 0.0 as a sentinel since
+        these are cluster-matched, not distance-ranked.
+    """
+    import psycopg
+    from psycopg.rows import dict_row  # type: ignore[import-not-found]
+
+    sql = (
+        "SELECT de.id, de.job_id, de.element_index, de.page, de.element_type, "
+        "de.content, de.metadata, de.chunk_index, "
+        "f.filename, f.category "
+        "FROM document_embeddings de "
+        "JOIN parse_jobs pj ON de.job_id = pj.parser_job_id "
+        "JOIN files f ON pj.file_id = f.id "
+        "WHERE de.job_id = %s "
+        "AND de.element_index = ANY(%s) "
+        "AND de.element_type IN ('text', 'table') "
+        "ORDER BY de.element_index ASC"
+    )
+
+    async with await psycopg.AsyncConnection.connect(
+        db_url, row_factory=dict_row
+    ) as conn:
+        cursor = await conn.execute(sql, (job_id, element_indices))
+        rows = await cursor.fetchall()
+        return [{**dict(row), "distance": 0.0} for row in rows]
+
+
 async def grade_documents(
     query: str, documents: list[dict[str, Any]], model: str
 ) -> GradeDocuments:
