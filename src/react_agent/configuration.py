@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field, fields
 from typing import Annotated
 
@@ -106,11 +107,13 @@ class Configuration:
     )
 
     enable_raptor: bool = field(
-        default=False,
+        default_factory=lambda: os.environ.get("ENABLE_RAPTOR", "false").lower()
+        == "true",
         metadata={
             "description": "Enable 2-stage RAPTOR retrieval. "
             "When enabled, searches raptor_summaries first, "
-            "then fetches leaf chunks by cluster indices."
+            "then fetches leaf chunks by cluster indices. "
+            "Can be set via ENABLE_RAPTOR env var."
         },
     )
 
