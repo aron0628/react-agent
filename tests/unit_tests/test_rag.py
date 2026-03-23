@@ -760,8 +760,8 @@ def _make_config(**overrides):
         "rag_grading_model": "gpt-4.1-mini",
         "rag_max_response_tokens": 4000,
         "enable_raptor": False,
-        "raptor_max_distance": 0.6,
-        "raptor_top_k": 3,
+        "raptor_max_distance": 0.8,
+        "raptor_top_k": 5,
     }
     defaults.update(overrides)
 

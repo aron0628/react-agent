@@ -118,7 +118,7 @@ class Configuration:
     )
 
     raptor_max_distance: float = field(
-        default=0.6,
+        default=0.8,
         metadata={
             "description": "Max cosine distance for RAPTOR summary search "
             "(higher than leaf threshold since summaries are more abstract)."
@@ -126,7 +126,7 @@ class Configuration:
     )
 
     raptor_top_k: int = field(
-        default=3,
+        default=5,
         metadata={
             "description": "Max RAPTOR summary clusters to retrieve in Stage 1."
         },
