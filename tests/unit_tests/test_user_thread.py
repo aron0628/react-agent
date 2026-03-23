@@ -24,7 +24,7 @@ async def test_create_user():
     mock_conn.execute.assert_called_once()
     call_args = mock_conn.execute.call_args
     assert "INSERT INTO users" in call_args[0][0]
-    assert ("user1", "Test User") == call_args[0][1]
+    assert ("user1", "Test User", "") == call_args[0][1]
 
 
 @pytest.mark.asyncio

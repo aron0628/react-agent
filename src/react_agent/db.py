@@ -50,21 +50,28 @@ async def setup_user_tables(db_url: str) -> None:
         await conn.commit()
 
 
-async def create_user(db_url: str, user_id: str, display_name: str = "") -> None:
+async def create_user(
+    db_url: str,
+    user_id: str,
+    display_name: str = "",
+    email: str = "",
+) -> None:
     """Create a new user.
 
     Args:
         db_url: PostgreSQL connection URL.
         user_id: Unique identifier for the user.
         display_name: Optional display name for the user.
+        email: Email address for the user.
     """
     import psycopg
 
     async with await psycopg.AsyncConnection.connect(db_url) as conn:
         await conn.execute(
-            "INSERT INTO users (user_id, display_name) VALUES (%s, %s) "
+            "INSERT INTO users (user_id, display_name, email) "
+            "VALUES (%s, %s, %s) "
             "ON CONFLICT (user_id) DO NOTHING",
-            (user_id, display_name),
+            (user_id, display_name, email),
         )
         await conn.commit()
 
