@@ -17,8 +17,6 @@ from langgraph.prebuilt import ToolNode
 
 from react_agent.configuration import Configuration
 from react_agent.db import (
-    create_thread_for_user,
-    create_user,
     get_database_url,
 )
 from react_agent.prompts import SUMMARIZATION_PROMPT, TITLE_PROMPT
@@ -27,51 +25,20 @@ from react_agent.tools import TOOLS
 
 logger = logging.getLogger(__name__)
 
-_admin_initialized = False
+_db_url_initialized = False
 _db_url: str | None = None
 
 
-async def ensure_admin_user(
-    state: State, config: RunnableConfig
-) -> dict[str, Any]:
-    """Ensure admin user and current thread exist in the database.
-
-    Creates admin user on first invocation, and registers the current
-    thread_id for the admin user on every invocation.
-
-    Args:
-        state: The current conversation state.
-        config: Configuration for the model run.
-
-    Returns:
-        dict: Always returns empty dict (no state changes).
-    """
-    global _admin_initialized, _db_url  # noqa: PLW0603
-
-    # 1) First call: create admin user (tables must exist beforehand)
-    if not _admin_initialized:
+def _get_db_url() -> str | None:
+    """Lazily initialize and cache the database URL."""
+    global _db_url_initialized, _db_url  # noqa: PLW0603
+    if not _db_url_initialized:
         try:
             _db_url = get_database_url()
-            await create_user(_db_url, "admin", "Admin")
-            _admin_initialized = True
-            logger.info("Admin user initialized successfully")
         except Exception:
-            logger.exception("Failed to initialize admin user")
             _db_url = None
-            _admin_initialized = True
-            return {}
-
-    # 2) Every call: register thread for admin user
-    if _db_url:
-        try:
-            configurable = config.get("configurable") or {}
-            thread_id = configurable.get("thread_id", "")
-            if thread_id:
-                await create_thread_for_user(_db_url, "admin", thread_id)
-        except Exception:
-            logger.exception("Failed to register thread")
-
-    return {}
+        _db_url_initialized = True
+    return _db_url
 
 
 async def summarize_conversation(
@@ -188,7 +155,7 @@ async def call_model(
         }
 
     # Generate thread title from first user message (once per thread)
-    if _db_url and not response.tool_calls:
+    if _get_db_url() and not response.tool_calls:
         try:
             from langchain_core.messages import HumanMessage
 
@@ -274,13 +241,11 @@ def create_graph(
     """
     builder = StateGraph(State, input=InputState, config_schema=Configuration)
 
-    builder.add_node(ensure_admin_user)
     builder.add_node(summarize_conversation)
     builder.add_node(call_model)
     builder.add_node("tools", ToolNode(TOOLS))
 
-    builder.add_edge("__start__", "ensure_admin_user")
-    builder.add_edge("ensure_admin_user", "summarize_conversation")
+    builder.add_edge("__start__", "summarize_conversation")
     builder.add_edge("summarize_conversation", "call_model")
 
     builder.add_conditional_edges(

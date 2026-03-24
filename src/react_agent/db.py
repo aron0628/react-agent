@@ -32,24 +32,6 @@ def get_database_url() -> str:
     return f"postgresql://{user}:{password}@{host}:{port}/{name}"
 
 
-async def setup_user_tables(db_url: str) -> None:
-    """Create users and user_threads tables if they don't exist.
-
-    Args:
-        db_url: PostgreSQL connection URL.
-    """
-    import psycopg  # type: ignore[import-not-found]
-
-    async with await psycopg.AsyncConnection.connect(db_url) as conn:
-        sql_path = os.path.join(
-            os.path.dirname(__file__), "migrations", "001_user_tables.sql"
-        )
-        with open(sql_path) as f:
-            sql = f.read()
-        await conn.execute(sql)
-        await conn.commit()
-
-
 async def create_user(
     db_url: str,
     user_id: str,
@@ -146,7 +128,7 @@ async def delete_thread(db_url: str, user_id: str, thread_id: str) -> bool:
 
 
 def create_checkpointer() -> Any:
-    """Factory for langgraph.json checkpointer config.
+    """Create a checkpointer for langgraph.json config.
 
     Called by langgraph_api's _yield_checkpointer as a callable.
     Returns an async context manager that the adapter enters via
