@@ -136,9 +136,14 @@ async def retrieve_documents(query: str) -> str:
         if not results:
             if config.enable_raptor:
                 logger.info("RAPTOR fallback to leaf search")
-            results = await search_documents(
-                embedding, db_url, config.rag_max_results, config.rag_max_distance
-            )
+            if config.enable_hybrid_search:
+                results = await _hybrid_search(
+                    query, embedding, db_url, config
+                )
+            else:
+                results = await search_documents(
+                    embedding, db_url, config.rag_max_results, config.rag_max_distance
+                )
 
         if not results:
             return "해당 문서에서 관련 내용을 찾지 못했습니다. 웹 검색을 시도해 보세요."
@@ -158,9 +163,14 @@ async def retrieve_documents(query: str) -> str:
             embedding = await generate_query_embedding(
                 rewritten, config.embedding_model
             )
-            results = await search_documents(
-                embedding, db_url, config.rag_max_results, config.rag_max_distance
-            )
+            if config.enable_hybrid_search:
+                results = await _hybrid_search(
+                    rewritten, embedding, db_url, config
+                )
+            else:
+                results = await search_documents(
+                    embedding, db_url, config.rag_max_results, config.rag_max_distance
+                )
             if not results:
                 break
             grades = await grade_documents(
@@ -181,6 +191,61 @@ async def retrieve_documents(query: str) -> str:
     except Exception:
         logger.exception("Error in retrieve_documents tool")
         return "문서 검색 중 오류가 발생했습니다. 웹 검색을 시도해 보세요."
+
+
+async def _hybrid_search(
+    query: str,
+    embedding: list[float],
+    db_url: str,
+    config: Configuration,
+) -> list[dict[str, Any]]:
+    """Dense + BM25 하이브리드 검색을 수행한다.
+
+    BM25 실패 시 Dense 결과만 반환한다 (graceful degradation).
+    """
+    from react_agent.rag import (
+        _load_kiwi_config,
+        _tokenize_query,
+        hybrid_merge,
+        search_bm25,
+        search_documents,
+    )
+
+    # BM25 토큰화 (실패 시 빈 토큰 → Dense only)
+    query_tokens: list[str] = []
+    try:
+        kiwi_config = await _load_kiwi_config(db_url)
+        query_tokens = _tokenize_query(
+            query,
+            kiwi_config["pos_whitelist"],
+            kiwi_config["min_keyword_length"],
+        )
+    except Exception:
+        logger.warning("BM25 tokenization failed, using dense only", exc_info=True)
+
+    if not query_tokens:
+        return await search_documents(
+            embedding, db_url, config.rag_max_results, config.rag_max_distance
+        )
+
+    # Dense + BM25 병렬 실행
+    dense_results, sparse_results = await asyncio.gather(
+        search_documents(
+            embedding, db_url, config.rag_max_results, config.rag_max_distance
+        ),
+        search_bm25(query_tokens, db_url, config.bm25_top_k),
+    )
+
+    if sparse_results:
+        logger.info(
+            "Hybrid search: %d dense, %d sparse results",
+            len(dense_results),
+            len(sparse_results),
+        )
+        return hybrid_merge(dense_results, sparse_results, config.hybrid_alpha)
+
+    logger.info("BM25 returned no results, using dense only")
+    return dense_results
 
 
 TOOLS: List[Callable[..., Any]] = [search, retrieve_documents]

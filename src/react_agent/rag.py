@@ -8,6 +8,9 @@ and token-budgeted result formatting.
 from __future__ import annotations
 
 import logging
+import math
+import time
+from pathlib import Path
 from typing import Any
 
 import tiktoken
@@ -306,3 +309,274 @@ def format_results(documents: list[dict[str, Any]], max_tokens: int) -> str:
         total_tokens += block_tokens
 
     return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# BM25 하이브리드 검색 모듈-레벨 싱글턴
+# ---------------------------------------------------------------------------
+
+_kiwi: Any = None
+_stopwords: set[str] = set()
+_kiwi_config_cache: dict = {}
+_kiwi_config_loaded_at: float = 0
+
+
+def _init_kiwi() -> Any:
+    """Kiwi 형태소 분석기 싱글턴을 초기화하고 반환한다."""
+    global _kiwi, _stopwords  # noqa: PLW0603
+
+    if _kiwi is not None:
+        return _kiwi
+
+    from kiwipiepy import Kiwi
+
+    _kiwi = Kiwi()
+
+    # 불용어 로드
+    stopwords_path = Path(__file__).parent / "resources" / "korean_stopwords.txt"
+    try:
+        with open(stopwords_path, encoding="utf-8") as f:
+            _stopwords = {line.strip() for line in f if line.strip()}
+    except FileNotFoundError:
+        logger.warning(f"불용어 파일을 찾을 수 없음: {stopwords_path}")
+        _stopwords = set()
+
+    return _kiwi
+
+
+async def _load_kiwi_config(db_url: str) -> dict:
+    """keyword_config 테이블에서 POS 화이트리스트와 최소 키워드 길이를 로드한다.
+
+    5분간 캐시하여 반복 DB 조회를 방지한다.
+    실패 시 기본값을 반환한다.
+    """
+    global _kiwi_config_cache, _kiwi_config_loaded_at  # noqa: PLW0603
+
+    now = time.time()
+    if _kiwi_config_cache and (now - _kiwi_config_loaded_at) < 300:
+        return _kiwi_config_cache
+
+    defaults = {
+        "pos_whitelist": ["NNG", "NNP", "SL", "SH"],
+        "min_keyword_length": 2,
+    }
+
+    try:
+        import psycopg
+        from psycopg.rows import dict_row  # type: ignore[import-not-found]
+
+        async with await psycopg.AsyncConnection.connect(
+            db_url, row_factory=dict_row
+        ) as conn:
+            cursor = await conn.execute(
+                "SELECT pos_whitelist, min_keyword_length FROM keyword_config LIMIT 1"
+            )
+            row = await cursor.fetchone()
+            if row:
+                _kiwi_config_cache = {
+                    "pos_whitelist": row["pos_whitelist"],
+                    "min_keyword_length": row["min_keyword_length"],
+                }
+            else:
+                _kiwi_config_cache = defaults
+    except Exception as e:
+        logger.warning(f"keyword_config 로드 실패, 기본값 사용: {e}")
+        _kiwi_config_cache = defaults
+
+    _kiwi_config_loaded_at = now
+    return _kiwi_config_cache
+
+
+def _tokenize_query(
+    query: str, pos_whitelist: list[str], min_length: int
+) -> list[str]:
+    """쿼리 텍스트를 형태소 분석하여 검색용 키워드 리스트를 반환한다.
+
+    2-stage 필터링:
+      Stage 1: Kiwi 형태소 분석 → POS 화이트리스트 필터
+      Stage 2: 불용어 제거 + 최소 길이 필터
+    """
+    kiwi = _init_kiwi()
+
+    # Stage 1: 형태소 분석 → POS 화이트리스트 필터
+    tokens = kiwi.tokenize(query)
+    candidates = [token.form for token in tokens if token.tag in pos_whitelist]
+
+    # Stage 2: 불용어 제거 + 최소 길이 필터
+    keywords = [
+        w.lower()
+        for w in candidates
+        if len(w) >= min_length and w.lower() not in _stopwords
+    ]
+    return keywords
+
+
+async def search_bm25(
+    query_tokens: list[str],
+    db_url: str,
+    top_k: int = 20,
+) -> list[dict]:
+    """BM25 키워드 검색을 수행한다.
+
+    document_keywords 테이블에서 쿼리 토큰과 매칭되는 문서를 검색하고,
+    간소화된 BM25 점수(IDF * TF)를 계산하여 상위 결과를 반환한다.
+    실패 시 빈 리스트를 반환한다 (graceful degradation).
+
+    Args:
+        query_tokens: 형태소 분석된 쿼리 키워드 리스트.
+        db_url: PostgreSQL 연결 URL.
+        top_k: 반환할 최대 결과 수.
+
+    Returns:
+        BM25 점수 기준 내림차순 정렬된 문서 딕셔너리 리스트.
+    """
+    if not query_tokens:
+        return []
+
+    try:
+        import json
+
+        import psycopg
+        from psycopg.rows import dict_row  # type: ignore[import-not-found]
+
+        async with await psycopg.AsyncConnection.connect(
+            db_url, row_factory=dict_row
+        ) as conn:
+            # 전체 문서 수 조회 (IDF 계산용)
+            cursor = await conn.execute(
+                "SELECT COUNT(*) AS cnt FROM document_keywords"
+            )
+            row = await cursor.fetchone()
+            total_docs = row["cnt"] if row else 0
+
+            if total_docs == 0:
+                return []
+
+            # 쿼리 토큰별 DF (Document Frequency) 조회
+            df_map: dict[str, int] = {}
+            for token in query_tokens:
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM document_keywords "
+                    "WHERE keywords @> %s::jsonb",
+                    (json.dumps([token], ensure_ascii=False),),
+                )
+                df_row = await cursor.fetchone()
+                df_map[token] = df_row["cnt"] if df_row else 0
+
+            # 매칭 문서 조회
+            cursor = await conn.execute(
+                "SELECT dk.job_id, dk.element_index, dk.page, "
+                "dk.keywords, dk.tf_scores, "
+                "de.content, de.metadata "
+                "FROM document_keywords dk "
+                "JOIN document_embeddings de ON dk.job_id = de.job_id "
+                "AND dk.element_index = de.parent_element_index "
+                "WHERE dk.keywords && %s",
+                (query_tokens,),
+            )
+            rows = await cursor.fetchall()
+
+            # BM25 점수 계산
+            results: list[dict] = []
+            for row in rows:
+                tf_scores = row["tf_scores"]
+                if isinstance(tf_scores, str):
+                    tf_scores = json.loads(tf_scores)
+
+                score = 0.0
+                for token in query_tokens:
+                    df = df_map.get(token, 0)
+                    if df == 0:
+                        continue
+                    idf = math.log(total_docs / df)
+                    tf = tf_scores.get(token, 0.0)
+                    score += idf * tf
+
+                metadata = row["metadata"]
+                if isinstance(metadata, str):
+                    metadata = json.loads(metadata)
+
+                results.append({
+                    "content": row["content"],
+                    "metadata": metadata,
+                    "page": row["page"],
+                    "job_id": row["job_id"],
+                    "element_index": row["element_index"],
+                    "bm25_score": score,
+                })
+
+            # 점수 내림차순 정렬 후 top_k 제한
+            results.sort(key=lambda x: x["bm25_score"], reverse=True)
+            return results[:top_k]
+
+    except Exception as e:
+        logger.error(f"BM25 검색 실패: {e}")
+        return []
+
+
+def hybrid_merge(
+    dense_results: list[dict],
+    sparse_results: list[dict],
+    alpha: float = 0.7,
+) -> list[dict]:
+    """Dense(벡터) 검색과 Sparse(BM25) 검색 결과를 하이브리드 병합한다.
+
+    Min-max 정규화 후 가중합으로 최종 점수를 산출한다.
+
+    Args:
+        dense_results: 벡터 검색 결과 (distance 필드 포함).
+        sparse_results: BM25 검색 결과 (bm25_score 필드 포함).
+        alpha: Dense 가중치 (0.0=순수 Sparse, 1.0=순수 Dense).
+
+    Returns:
+        hybrid_score 기준 내림차순 정렬된 병합 결과 리스트.
+    """
+    # Dense 점수 정규화: distance → similarity (1 - distance) → min-max
+    dense_scores: dict[tuple[str, int], float] = {}
+    if dense_results:
+        similarities = [1.0 - d.get("distance", 0.0) for d in dense_results]
+        sim_min = min(similarities)
+        sim_max = max(similarities)
+        sim_range = sim_max - sim_min if sim_max != sim_min else 1.0
+
+        for doc, sim in zip(dense_results, similarities):
+            key = (doc.get("job_id", ""), doc.get("element_index", 0))
+            dense_scores[key] = (sim - sim_min) / sim_range
+
+    # Sparse 점수 정규화: bm25_score → min-max
+    sparse_scores: dict[tuple[str, int], float] = {}
+    if sparse_results:
+        bm25_vals = [d.get("bm25_score", 0.0) for d in sparse_results]
+        bm25_min = min(bm25_vals)
+        bm25_max = max(bm25_vals)
+        bm25_range = bm25_max - bm25_min if bm25_max != bm25_min else 1.0
+
+        for doc in sparse_results:
+            key = (doc.get("job_id", ""), doc.get("element_index", 0))
+            sparse_scores[key] = (doc.get("bm25_score", 0.0) - bm25_min) / bm25_range
+
+    # 모든 고유 키 수집
+    all_keys = set(dense_scores.keys()) | set(sparse_scores.keys())
+
+    # 문서 데이터 인덱스 구축
+    doc_map: dict[tuple[str, int], dict] = {}
+    for doc in dense_results:
+        key = (doc.get("job_id", ""), doc.get("element_index", 0))
+        doc_map[key] = doc
+    for doc in sparse_results:
+        key = (doc.get("job_id", ""), doc.get("element_index", 0))
+        if key not in doc_map:
+            doc_map[key] = doc
+
+    # 하이브리드 점수 계산 및 병합
+    merged: list[dict] = []
+    for key in all_keys:
+        dense_norm = dense_scores.get(key, 0.0)
+        sparse_norm = sparse_scores.get(key, 0.0)
+        hybrid_score = alpha * dense_norm + (1.0 - alpha) * sparse_norm
+
+        doc = {**doc_map[key], "hybrid_score": hybrid_score}
+        merged.append(doc)
+
+    merged.sort(key=lambda x: x["hybrid_score"], reverse=True)
+    return merged

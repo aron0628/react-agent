@@ -132,6 +132,31 @@ class Configuration:
         },
     )
 
+    enable_hybrid_search: bool = field(
+        default_factory=lambda: os.environ.get("ENABLE_HYBRID_SEARCH", "false").lower()
+        == "true",
+        metadata={
+            "description": "하이브리드 검색 활성화 (BM25 + Dense). env: ENABLE_HYBRID_SEARCH",
+            "env": "ENABLE_HYBRID_SEARCH",
+        },
+    )
+
+    hybrid_alpha: float = field(
+        default_factory=lambda: float(os.environ.get("HYBRID_ALPHA", "0.7")),
+        metadata={
+            "description": "Dense 가중치 (0.0=순수 Sparse, 1.0=순수 Dense). env: HYBRID_ALPHA",
+            "env": "HYBRID_ALPHA",
+        },
+    )
+
+    bm25_top_k: int = field(
+        default_factory=lambda: int(os.environ.get("BM25_TOP_K", "20")),
+        metadata={
+            "description": "BM25 키워드 검색 후보 수. env: BM25_TOP_K",
+            "env": "BM25_TOP_K",
+        },
+    )
+
     @classmethod
     def from_runnable_config(cls, config: RunnableConfig) -> Configuration:
         """Create a Configuration instance from a RunnableConfig object."""
