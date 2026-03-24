@@ -215,10 +215,16 @@ async def call_model(
                         langgraph_api_url = os.environ.get(
                             "LANGGRAPH_API_URL", "http://localhost:2024"
                         )
+                        langgraph_auth_key = os.environ.get("LANGGRAPH_AUTH_KEY", "")
+                        headers: dict[str, str] = {}
+                        if langgraph_auth_key:
+                            headers["Authorization"] = f"Bearer {langgraph_auth_key}"
+
                         async with httpx.AsyncClient() as http_client:
                             await http_client.patch(
                                 f"{langgraph_api_url}/threads/{thread_id}",
                                 json={"metadata": {"title": title}},
+                                headers=headers,
                                 timeout=5.0,
                             )
                     except Exception:
