@@ -25,8 +25,12 @@ async def search(query: str) -> dict[str, Any] | None:
     for answering questions about current events.
     """
     configuration = Configuration.from_context()
+    logger.info("[tool:search] query=%r, max_results=%d", query, configuration.max_search_results)
     wrapped = TavilySearch(max_results=configuration.max_search_results)
-    return cast(dict[str, Any], await wrapped.ainvoke({"query": query}))
+    result = cast(dict[str, Any], await wrapped.ainvoke({"query": query}))
+    result_count = len(result.get("results", [])) if isinstance(result, dict) else 0
+    logger.info("[tool:search] done — results=%d", result_count)
+    return result
 
 
 async def retrieve_documents(query: str) -> str:
@@ -55,12 +59,18 @@ async def retrieve_documents(query: str) -> str:
     )
 
     config = Configuration.from_context()
+    logger.info("[tool:retrieve_documents] query=%r", query)
 
     try:
         db_url = get_database_url()
 
         # Generate query embedding
         embedding = await generate_query_embedding(query, config.embedding_model)
+        logger.info(
+            "[tool:retrieve_documents] embedding — model=%s, dims=%d",
+            config.embedding_model,
+            len(embedding),
+        )
 
         # Dimension mismatch guard
         if len(embedding) != config.embedding_dimensions:
@@ -146,7 +156,14 @@ async def retrieve_documents(query: str) -> str:
                 )
 
         if not results:
+            logger.info("[tool:retrieve_documents] no results found")
             return "해당 문서에서 관련 내용을 찾지 못했습니다. 웹 검색을 시도해 보세요."
+
+        logger.info(
+            "[tool:retrieve_documents] search — strategy=%s, results=%d",
+            "raptor" if config.enable_raptor else ("hybrid" if config.enable_hybrid_search else "dense"),
+            len(results),
+        )
 
         # Batch grade documents
         grades = await grade_documents(query, results, config.rag_grading_model)
@@ -154,12 +171,24 @@ async def retrieve_documents(query: str) -> str:
         relevant_docs = [
             doc for i, doc in enumerate(results) if i in relevant_indices
         ]
+        logger.info(
+            "[tool:retrieve_documents] grading — model=%s, total=%d, relevant=%d",
+            config.rag_grading_model,
+            len(results),
+            len(relevant_docs),
+        )
 
         # Rewrite and retry if no relevant docs
         attempts = 0
         while not relevant_docs and attempts < config.rag_max_rewrite_attempts:
             attempts += 1
             rewritten = await rewrite_query(query, config.rag_grading_model)
+            logger.info(
+                "[tool:retrieve_documents] rewrite attempt %d — original=%r, rewritten=%r",
+                attempts,
+                query,
+                rewritten,
+            )
             embedding = await generate_query_embedding(
                 rewritten, config.embedding_model
             )
@@ -182,8 +211,17 @@ async def retrieve_documents(query: str) -> str:
             ]
 
         if not relevant_docs:
+            logger.info(
+                "[tool:retrieve_documents] done — no relevant documents after %d rewrite attempts",
+                attempts,
+            )
             return "해당 문서에서 관련 내용을 찾지 못했습니다. 웹 검색을 시도해 보세요."
 
+        logger.info(
+            "[tool:retrieve_documents] done — returning %d relevant documents (rewrites=%d)",
+            len(relevant_docs),
+            attempts,
+        )
         return await asyncio.to_thread(
             format_results, relevant_docs, config.rag_max_response_tokens
         )

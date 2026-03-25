@@ -67,9 +67,21 @@ async def summarize_conversation(
         dict: Empty dict if below threshold, or summary + RemoveMessage list.
     """
     configuration = Configuration.from_runnable_config(config)
+    msg_count = len(state.messages)
 
-    if len(state.messages) <= configuration.summarization_threshold:
+    if msg_count <= configuration.summarization_threshold:
+        logger.info(
+            "[summarize_conversation] skip — messages=%d, threshold=%d",
+            msg_count,
+            configuration.summarization_threshold,
+        )
         return {}
+
+    logger.info(
+        "[summarize_conversation] summarizing — messages=%d, threshold=%d",
+        msg_count,
+        configuration.summarization_threshold,
+    )
 
     # Format messages for summarization (exclude last 2)
     messages_to_summarize = state.messages[:-2]
@@ -103,6 +115,11 @@ async def summarize_conversation(
     delete_messages = [
         RemoveMessage(id=m.id) for m in messages_to_summarize if m.id is not None
     ]
+    logger.info(
+        "[summarize_conversation] done — removed %d messages, summary_len=%d",
+        len(delete_messages),
+        len(summary_content),
+    )
     return {"summary": summary_content, "messages": delete_messages}
 
 
@@ -126,22 +143,35 @@ async def pre_retrieve(
     """
     # Gate 1: DB availability
     if _get_db_url() is None:
+        logger.info("[pre_retrieve] skip — no database configured")
         return {"retrieved_context": ""}
 
     # Gate 2: Find the last HumanMessage
     human_msgs = [m for m in state.messages if isinstance(m, HumanMessage)]
     if not human_msgs:
+        logger.info("[pre_retrieve] skip — no user message found")
         return {"retrieved_context": ""}
 
-    query = str(human_msgs[-1].content).strip()
+    raw_content = human_msgs[-1].content
+    if isinstance(raw_content, list):
+        query = " ".join(
+            block["text"] for block in raw_content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ).strip()
+    else:
+        query = str(raw_content).strip()
 
     # Gate 3: Minimum length
     if len(query) < 3:
+        logger.info("[pre_retrieve] skip — query too short: %r", query)
         return {"retrieved_context": ""}
 
     # Gate 4: Greeting pattern
     if _GREETING_PATTERN.match(query):
+        logger.info("[pre_retrieve] skip — greeting detected: %r", query)
         return {"retrieved_context": ""}
+
+    logger.info("[pre_retrieve] retrieving — query=%r", query)
 
     # Run retrieval with callbacks disabled to prevent internal LLM
     # calls (grading, rewrite) from streaming to the frontend.
@@ -163,10 +193,14 @@ async def pre_retrieve(
             var_child_runnable_config.reset(_token)
 
         if result and "찾지 못했습니다" not in result and "오류" not in result:
+            logger.info(
+                "[pre_retrieve] done — context_len=%d", len(result)
+            )
             return {"retrieved_context": result}
+        logger.info("[pre_retrieve] done — no relevant documents found")
         return {"retrieved_context": ""}
     except Exception:
-        logger.warning("pre_retrieve failed, proceeding without context", exc_info=True)
+        logger.warning("[pre_retrieve] failed, proceeding without context", exc_info=True)
         return {"retrieved_context": ""}
 
 
@@ -188,6 +222,7 @@ async def call_model(
         dict: A dictionary containing the model's response message.
     """
     configuration = Configuration.from_runnable_config(config)
+    logger.info("[call_model] start — model=%s", configuration.model)
 
     # Initialize the model with tool binding. Change the model or add more tools here.
     # ChatOpenAI 객체 생성
@@ -203,6 +238,11 @@ async def call_model(
     )
 
     # Prepend conversation summary if available
+    logger.info(
+        "[call_model] context — summary=%s, retrieved_context=%s",
+        f"yes({len(state.summary)} chars)" if state.summary else "no",
+        f"yes({len(state.retrieved_context)} chars)" if state.retrieved_context else "no",
+    )
     if state.summary:
         system_message = (
             f"Summary of earlier conversation:\n{state.summary}\n\n{system_message}"
@@ -234,8 +274,18 @@ async def call_model(
         ),
     )
 
+    # Log response details
+    tool_names = [tc["name"] for tc in response.tool_calls] if response.tool_calls else []
+    response_len = len(response.content) if isinstance(response.content, str) else 0
+    logger.info(
+        "[call_model] done — response_len=%d, tool_calls=%s",
+        response_len,
+        tool_names if tool_names else "none",
+    )
+
     # Handle the case when it's the last step and the model still wants to use a tool
     if state.is_last_step and response.tool_calls:
+        logger.warning("[call_model] last step reached — forcing end without tool execution")
         return {
             "messages": [
                 AIMessage(
@@ -310,8 +360,11 @@ def route_model_output(state: State) -> Literal["__end__", "tools"]:
         )
     # If there is no tool call, then we finish
     if not last_message.tool_calls:
+        logger.info("[route_model_output] → __end__")
         return "__end__"
     # Otherwise we execute the requested actions
+    tool_names = [tc["name"] for tc in last_message.tool_calls]
+    logger.info("[route_model_output] → tools %s", tool_names)
     return "tools"
 
 
