@@ -369,16 +369,25 @@ async def _load_kiwi_config(db_url: str) -> dict:
             db_url, row_factory=dict_row
         ) as conn:
             cursor = await conn.execute(
-                "SELECT pos_whitelist, min_keyword_length FROM keyword_config LIMIT 1"
+                "SELECT config_key, config_value FROM keyword_config"
             )
-            row = await cursor.fetchone()
-            if row:
+            rows = await cursor.fetchall()
+            if rows:
+                kv = {row["config_key"]: row["config_value"] for row in rows}
                 _kiwi_config_cache = {
-                    "pos_whitelist": row["pos_whitelist"],
-                    "min_keyword_length": row["min_keyword_length"],
+                    "pos_whitelist": kv.get("pos_whitelist", defaults["pos_whitelist"]),
+                    "min_keyword_length": kv.get(
+                        "min_keyword_length", defaults["min_keyword_length"]
+                    ),
                 }
+                logger.info(
+                    "[kiwi_config] loaded from DB — pos_whitelist=%s, min_length=%s",
+                    _kiwi_config_cache["pos_whitelist"],
+                    _kiwi_config_cache["min_keyword_length"],
+                )
             else:
                 _kiwi_config_cache = defaults
+                logger.info("[kiwi_config] no rows found, using defaults")
     except Exception as e:
         logger.warning(f"keyword_config 로드 실패, 기본값 사용: {e}")
         _kiwi_config_cache = defaults
@@ -408,6 +417,7 @@ def _tokenize_query(
         for w in candidates
         if len(w) >= min_length and w.lower() not in _stopwords
     ]
+    logger.info("[tokenize] query=%r → keywords=%s", query, keywords)
     return keywords
 
 
