@@ -457,8 +457,8 @@ async def search_bm25(
             for token in query_tokens:
                 cursor = await conn.execute(
                     "SELECT COUNT(*) AS cnt FROM document_keywords "
-                    "WHERE keywords @> %s::jsonb",
-                    (json.dumps([token], ensure_ascii=False),),
+                    "WHERE %s = ANY(keywords)",
+                    (token,),
                 )
                 df_row = await cursor.fetchone()
                 df_map[token] = df_row["cnt"] if df_row else 0
@@ -471,7 +471,7 @@ async def search_bm25(
                 "FROM document_keywords dk "
                 "JOIN document_embeddings de ON dk.job_id = de.job_id "
                 "AND dk.element_index = de.parent_element_index "
-                "WHERE dk.keywords && %s",
+                "WHERE dk.keywords && %s::text[]",
                 (query_tokens,),
             )
             rows = await cursor.fetchall()
