@@ -26,3 +26,10 @@ def test_graph_has_summarize_node():
     # Check that the graph has the expected nodes
     node_names = list(g.get_graph().nodes.keys())
     assert "summarize_conversation" in node_names
+
+
+def test_graph_has_pre_retrieve_node():
+    """Graph should contain the pre_retrieve node."""
+    g = create_graph()
+    node_names = list(g.get_graph().nodes.keys())
+    assert "pre_retrieve" in node_names

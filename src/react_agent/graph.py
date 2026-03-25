@@ -5,10 +5,11 @@ Works with a chat model with tool calling support.
 
 import logging
 import os
+import re
 from datetime import UTC, datetime
 from typing import Any, Dict, List, Literal, cast
 
-from langchain_core.messages import AIMessage, RemoveMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -24,6 +25,14 @@ from react_agent.state import InputState, State
 from react_agent.tools import TOOLS
 
 logger = logging.getLogger(__name__)
+
+MAX_CONTEXT_CHARS = 16000
+"""Max combined character length for summary + retrieved_context in the system prompt."""
+
+_GREETING_PATTERN = re.compile(
+    r"^(안녕|hi|hello|hey|thanks|thank you|감사|고마워|bye|ㅎㅇ|ㅂㅂ)[\s!?.]*$",
+    re.IGNORECASE,
+)
 
 _db_url_initialized = False
 _db_url: str | None = None
@@ -97,6 +106,56 @@ async def summarize_conversation(
     return {"summary": summary_content, "messages": delete_messages}
 
 
+async def pre_retrieve(
+    state: State, config: RunnableConfig
+) -> dict[str, Any]:
+    """Pre-retrieve documents before calling the model.
+
+    Runs document retrieval on the latest user message so that relevant
+    context is available in the system prompt, regardless of LLM tool
+    selection. A lightweight gating mechanism skips retrieval for short
+    messages, greetings, and when no database is configured.
+
+    Args:
+        state: The current conversation state.
+        config: Configuration for the model run.
+
+    Returns:
+        dict with ``retrieved_context`` key (always present to prevent
+        stale context across checkpointer turns).
+    """
+    # Gate 1: DB availability
+    if _get_db_url() is None:
+        return {"retrieved_context": ""}
+
+    # Gate 2: Find the last HumanMessage
+    human_msgs = [m for m in state.messages if isinstance(m, HumanMessage)]
+    if not human_msgs:
+        return {"retrieved_context": ""}
+
+    query = str(human_msgs[-1].content).strip()
+
+    # Gate 3: Minimum length
+    if len(query) < 3:
+        return {"retrieved_context": ""}
+
+    # Gate 4: Greeting pattern
+    if _GREETING_PATTERN.match(query):
+        return {"retrieved_context": ""}
+
+    # Run retrieval
+    try:
+        from react_agent.tools import retrieve_documents
+
+        result = await retrieve_documents(query)
+        if result and "찾지 못했습니다" not in result and "오류" not in result:
+            return {"retrieved_context": result}
+        return {"retrieved_context": ""}
+    except Exception:
+        logger.warning("pre_retrieve failed, proceeding without context", exc_info=True)
+        return {"retrieved_context": ""}
+
+
 # Define the function that calls the model
 
 
@@ -135,6 +194,24 @@ async def call_model(
             f"Summary of earlier conversation:\n{state.summary}\n\n{system_message}"
         )
 
+    # Inject pre-retrieved document context
+    if state.retrieved_context:
+        context = state.retrieved_context
+        # Truncate retrieved_context if combined size exceeds budget
+        summary_len = len(state.summary) if state.summary else 0
+        max_context_len = MAX_CONTEXT_CHARS - summary_len
+        if max_context_len > 0 and len(context) > max_context_len:
+            context = context[:max_context_len] + "\n\n... (truncated)"
+        if max_context_len > 0:
+            system_message = (
+                f"## Retrieved Document Context\n"
+                f"The following documents were retrieved based on the user's query. "
+                f"Use this information to answer.\n"
+                f"Do not call retrieve_documents again unless the provided context "
+                f"is insufficient for answering the question.\n\n"
+                f"{context}\n\n{system_message}"
+            )
+
     # Get the model's response
     response = cast(
         AIMessage,
@@ -157,8 +234,6 @@ async def call_model(
     # Generate thread title from first user message (once per thread)
     if _get_db_url() and not response.tool_calls:
         try:
-            from langchain_core.messages import HumanMessage
-
             human_msgs = [m for m in state.messages if isinstance(m, HumanMessage)]
             if len(human_msgs) == 1:
                 configurable = config.get("configurable") or {}
@@ -242,11 +317,14 @@ def create_graph(
     builder = StateGraph(State, input=InputState, config_schema=Configuration)
 
     builder.add_node(summarize_conversation)
+    builder.add_node(pre_retrieve)
     builder.add_node(call_model)
     builder.add_node("tools", ToolNode(TOOLS))
 
+    # pre_retrieve must run after summarize_conversation and before call_model
     builder.add_edge("__start__", "summarize_conversation")
-    builder.add_edge("summarize_conversation", "call_model")
+    builder.add_edge("summarize_conversation", "pre_retrieve")
+    builder.add_edge("pre_retrieve", "call_model")
 
     builder.add_conditional_edges(
         "call_model",

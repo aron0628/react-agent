@@ -59,6 +59,12 @@ class State(InputState):
     Used to preserve context after older messages are trimmed.
     """
 
+    retrieved_context: str = ""
+    """
+    Pre-retrieved document context injected by the pre_retrieve node.
+    Reset every turn to prevent stale context across checkpointer turns.
+    """
+
     # Additional attributes can be added here as needed.
     # Common examples include:
     # retrieved_documents: List[Document] = field(default_factory=list)
