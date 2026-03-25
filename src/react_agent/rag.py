@@ -233,7 +233,7 @@ async def grade_documents(
 
     llm = ChatOpenAI(model=model, temperature=0, streaming=False)
     structured_llm = llm.with_structured_output(GradeDocuments)
-    result = await structured_llm.ainvoke(prompt)
+    result = await structured_llm.ainvoke(prompt, config={"callbacks": []})
 
     # Validate indices are in range
     valid_grades = [
@@ -261,7 +261,7 @@ async def rewrite_query(original_query: str, model: str) -> str:
         "document content better. Return only the rewritten query.\n\n"
         f"Original query: {original_query}"
     )
-    response = await llm.ainvoke(prompt)
+    response = await llm.ainvoke(prompt, config={"callbacks": []})
     return str(response.content)
 
 
