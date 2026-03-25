@@ -143,11 +143,25 @@ async def pre_retrieve(
     if _GREETING_PATTERN.match(query):
         return {"retrieved_context": ""}
 
-    # Run retrieval
+    # Run retrieval with callbacks disabled to prevent internal LLM
+    # calls (grading, rewrite) from streaming to the frontend.
+    # Configuration.from_context() still works because configurable
+    # is preserved — only the callback chain is cleared.
     try:
+        from langchain_core.runnables import RunnableConfig as _RC
+
         from react_agent.tools import retrieve_documents
 
-        result = await retrieve_documents(query)
+        # Strip callbacks from the current config while keeping configurable
+        _cfg: _RC = {**config, "callbacks": []}  # type: ignore[typeddict-item]
+        from langgraph.config import var_child_runnable_config
+
+        _token = var_child_runnable_config.set(_cfg)
+        try:
+            result = await retrieve_documents(query)
+        finally:
+            var_child_runnable_config.reset(_token)
+
         if result and "찾지 못했습니다" not in result and "오류" not in result:
             return {"retrieved_context": result}
         return {"retrieved_context": ""}
