@@ -11,18 +11,19 @@ from typing import Any, Dict, List, Literal, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
 
 from react_agent.configuration import Configuration
 from react_agent.db import (
+    ensure_settings_loaded,
     get_database_url,
 )
 from react_agent.prompts import SUMMARIZATION_PROMPT, TITLE_PROMPT
 from react_agent.state import InputState, State
 from react_agent.tools import TOOLS
+from react_agent.utils import load_chat_model
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,10 @@ async def summarize_conversation(
     Returns:
         dict: Empty dict if below threshold, or summary + RemoveMessage list.
     """
+    db_url = _get_db_url()
+    if db_url:
+        await ensure_settings_loaded(db_url)
+
     configuration = Configuration.from_runnable_config(config)
     msg_count = len(state.messages)
 
@@ -92,10 +97,7 @@ async def summarize_conversation(
     )
 
     # Call LLM for summarization
-    llm = ChatOpenAI(
-        temperature=0,
-        model=configuration.summarization_model,
-    )
+    llm = load_chat_model(configuration.summarization_model, temperature=0)
     summary_response = await llm.ainvoke(
         SUMMARIZATION_PROMPT.format(conversation=conversation_text)
     )
@@ -123,9 +125,7 @@ async def summarize_conversation(
     return {"summary": summary_content, "messages": delete_messages}
 
 
-async def pre_retrieve(
-    state: State, config: RunnableConfig
-) -> dict[str, Any]:
+async def pre_retrieve(state: State, config: RunnableConfig) -> dict[str, Any]:
     """Pre-retrieve documents before calling the model.
 
     Runs document retrieval on the latest user message so that relevant
@@ -155,7 +155,8 @@ async def pre_retrieve(
     raw_content = human_msgs[-1].content
     if isinstance(raw_content, list):
         query = " ".join(
-            block["text"] for block in raw_content
+            block["text"]
+            for block in raw_content
             if isinstance(block, dict) and block.get("type") == "text"
         ).strip()
     else:
@@ -193,14 +194,14 @@ async def pre_retrieve(
             var_child_runnable_config.reset(_token)
 
         if result and "찾지 못했습니다" not in result and "오류" not in result:
-            logger.info(
-                "[pre_retrieve] done — context_len=%d", len(result)
-            )
+            logger.info("[pre_retrieve] done — context_len=%d", len(result))
             return {"retrieved_context": result}
         logger.info("[pre_retrieve] done — no relevant documents found")
         return {"retrieved_context": ""}
     except Exception:
-        logger.warning("[pre_retrieve] failed, proceeding without context", exc_info=True)
+        logger.warning(
+            "[pre_retrieve] failed, proceeding without context", exc_info=True
+        )
         return {"retrieved_context": ""}
 
 
@@ -225,11 +226,7 @@ async def call_model(
     logger.info("[call_model] start — model=%s", configuration.model)
 
     # Initialize the model with tool binding. Change the model or add more tools here.
-    # ChatOpenAI 객체 생성
-    llm = ChatOpenAI(
-        temperature=0.1,
-        model=configuration.model,
-    )
+    llm = load_chat_model(configuration.model, temperature=0.1)
     model = llm.bind_tools(TOOLS)
 
     # Format the system prompt. Customize this to change the agent's behavior.
@@ -241,7 +238,9 @@ async def call_model(
     logger.info(
         "[call_model] context — summary=%s, retrieved_context=%s",
         f"yes({len(state.summary)} chars)" if state.summary else "no",
-        f"yes({len(state.retrieved_context)} chars)" if state.retrieved_context else "no",
+        f"yes({len(state.retrieved_context)} chars)"
+        if state.retrieved_context
+        else "no",
     )
     if state.summary:
         system_message = (
@@ -275,7 +274,9 @@ async def call_model(
     )
 
     # Log response details
-    tool_names = [tc["name"] for tc in response.tool_calls] if response.tool_calls else []
+    tool_names = (
+        [tc["name"] for tc in response.tool_calls] if response.tool_calls else []
+    )
     response_len = len(response.content) if isinstance(response.content, str) else 0
     logger.info(
         "[call_model] done — response_len=%d, tool_calls=%s",
@@ -285,7 +286,9 @@ async def call_model(
 
     # Handle the case when it's the last step and the model still wants to use a tool
     if state.is_last_step and response.tool_calls:
-        logger.warning("[call_model] last step reached — forcing end without tool execution")
+        logger.warning(
+            "[call_model] last step reached — forcing end without tool execution"
+        )
         return {
             "messages": [
                 AIMessage(
@@ -303,14 +306,18 @@ async def call_model(
                 configurable = config.get("configurable") or {}
                 thread_id = configurable.get("thread_id", "")
                 if thread_id:
-                    title_llm = ChatOpenAI(
-                        temperature=0,
-                        model=configuration.summarization_model,
+                    title_llm = load_chat_model(
+                        configuration.summarization_model, temperature=0
                     )
                     title_response = await title_llm.ainvoke(
-                        [{"role": "user", "content": TITLE_PROMPT.format(
-                            message=human_msgs[0].content
-                        )}]
+                        [
+                            {
+                                "role": "user",
+                                "content": TITLE_PROMPT.format(
+                                    message=human_msgs[0].content
+                                ),
+                            }
+                        ]
                     )
                     title = str(title_response.content).strip()[:50]
 

@@ -4,12 +4,26 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, fields
-from typing import Annotated
+from typing import Annotated, Any
 
 from langchain_core.runnables import RunnableConfig, ensure_config
 from langgraph.config import get_config
 
 from react_agent import prompts
+
+
+def _ensure_provider_prefix(model_name: str) -> str:
+    """Auto-prefix 'openai/' if no provider prefix exists.
+
+    Args:
+        model_name: A model name string, optionally with a provider prefix.
+
+    Returns:
+        The model name with a provider prefix (e.g. 'openai/gpt-4.1').
+    """
+    if "/" not in model_name:
+        return f"openai/{model_name}"
+    return model_name
 
 
 @dataclass(kw_only=True)
@@ -25,7 +39,7 @@ class Configuration:
     )
 
     model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = field(
-        default="gpt-4.1",
+        default="openai/gpt-4.1",
         metadata={
             "description": "The name of the language model to use for the agent's main interactions. "
         },
@@ -47,7 +61,7 @@ class Configuration:
 
     summarization_model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = (
         field(
-            default="gpt-4.1-mini",
+            default="openai/gpt-4.1-mini",
             metadata={"description": "Model to use for conversation summarization."},
         )
     )
@@ -78,9 +92,7 @@ class Configuration:
 
     rag_max_results: int = field(
         default=5,
-        metadata={
-            "description": "Maximum number of documents to retrieve."
-        },
+        metadata={"description": "Maximum number of documents to retrieve."},
     )
 
     rag_max_rewrite_attempts: int = field(
@@ -92,10 +104,8 @@ class Configuration:
 
     rag_grading_model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = (
         field(
-            default="gpt-4.1-mini",
-            metadata={
-                "description": "Model for batch document relevance grading."
-            },
+            default="openai/gpt-4.1-mini",
+            metadata={"description": "Model for batch document relevance grading."},
         )
     )
 
@@ -107,8 +117,9 @@ class Configuration:
     )
 
     enable_raptor: bool = field(
-        default_factory=lambda: os.environ.get("ENABLE_RAPTOR", "false").lower()
-        == "true",
+        default_factory=lambda: (
+            os.environ.get("ENABLE_RAPTOR", "false").lower() == "true"
+        ),
         metadata={
             "description": "Enable 2-stage RAPTOR retrieval. "
             "When enabled, searches raptor_summaries first, "
@@ -127,14 +138,13 @@ class Configuration:
 
     raptor_top_k: int = field(
         default=5,
-        metadata={
-            "description": "Max RAPTOR summary clusters to retrieve in Stage 1."
-        },
+        metadata={"description": "Max RAPTOR summary clusters to retrieve in Stage 1."},
     )
 
     enable_hybrid_search: bool = field(
-        default_factory=lambda: os.environ.get("ENABLE_HYBRID_SEARCH", "false").lower()
-        == "true",
+        default_factory=lambda: (
+            os.environ.get("ENABLE_HYBRID_SEARCH", "false").lower() == "true"
+        ),
         metadata={
             "description": "하이브리드 검색 활성화 (BM25 + Dense). env: ENABLE_HYBRID_SEARCH",
             "env": "ENABLE_HYBRID_SEARCH",
@@ -160,14 +170,29 @@ class Configuration:
     @classmethod
     def from_runnable_config(cls, config: RunnableConfig) -> Configuration:
         """Create a Configuration instance from a RunnableConfig object."""
+        from react_agent.db import get_cached_settings
+
         config = ensure_config(config)
         configurable = config.get("configurable") or {}
         _fields = {f.name for f in fields(cls) if f.init}
-        return cls(**{k: v for k, v in configurable.items() if k in _fields})
+        # Start with cached DB settings, then override with configurable values
+        cached = get_cached_settings()
+        merged: dict[str, Any] = {k: v for k, v in cached.items() if k in _fields}
+        merged.update({k: v for k, v in configurable.items() if k in _fields})
+        instance = cls(**merged)
+        # Apply provider prefix to model-type fields
+        _model_fields = {"model", "summarization_model", "rag_grading_model"}
+        for fname in _model_fields:
+            val = getattr(instance, fname, None)
+            if isinstance(val, str):
+                setattr(instance, fname, _ensure_provider_prefix(val))
+        return instance
 
     @classmethod
     def from_context(cls) -> Configuration:
         """Create a Configuration instance from the current context."""
+        from react_agent.db import get_cached_settings
+
         try:
             config = get_config()
         except RuntimeError:
@@ -175,4 +200,15 @@ class Configuration:
         config = ensure_config(config)
         configurable = config.get("configurable") or {}
         _fields = {f.name for f in fields(cls) if f.init}
-        return cls(**{k: v for k, v in configurable.items() if k in _fields})
+        # Start with cached DB settings, then override with configurable values
+        cached = get_cached_settings()
+        merged: dict[str, Any] = {k: v for k, v in cached.items() if k in _fields}
+        merged.update({k: v for k, v in configurable.items() if k in _fields})
+        instance = cls(**merged)
+        # Apply provider prefix to model-type fields
+        _model_fields = {"model", "summarization_model", "rag_grading_model"}
+        for fname in _model_fields:
+            val = getattr(instance, fname, None)
+            if isinstance(val, str):
+                setattr(instance, fname, _ensure_provider_prefix(val))
+        return instance

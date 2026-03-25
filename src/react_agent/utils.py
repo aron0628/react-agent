@@ -1,5 +1,7 @@
 """Utility & helper functions."""
 
+from typing import Any, cast
+
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
@@ -17,11 +19,14 @@ def get_message_text(msg: BaseMessage) -> str:
         return "".join(txts).strip()
 
 
-def load_chat_model(fully_specified_name: str) -> BaseChatModel:
+def load_chat_model(fully_specified_name: str, **kwargs: Any) -> BaseChatModel:
     """Load a chat model from a fully specified name.
 
     Args:
-        fully_specified_name (str): String in the format 'provider/model'.
+        fully_specified_name: String in the format 'provider/model'.
+        **kwargs: Additional kwargs passed to init_chat_model (temperature, streaming, etc.)
     """
     provider, model = fully_specified_name.split("/", maxsplit=1)
-    return init_chat_model(model, model_provider=provider)
+    return cast(
+        BaseChatModel, init_chat_model(model, model_provider=provider, **kwargs)
+    )

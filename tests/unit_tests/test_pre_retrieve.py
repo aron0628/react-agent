@@ -20,7 +20,9 @@ async def test_pre_retrieve_with_human_message_and_db():
     config = {"configurable": {}}
 
     with (
-        patch("react_agent.graph._get_db_url", return_value="postgresql://localhost/test"),
+        patch(
+            "react_agent.graph._get_db_url", return_value="postgresql://localhost/test"
+        ),
         patch(
             "react_agent.tools.retrieve_documents",
             new_callable=AsyncMock,
@@ -39,7 +41,9 @@ async def test_pre_retrieve_no_human_message():
     state = State(messages=[AIMessage(content="Hello", id="1")])
     config = {"configurable": {}}
 
-    with patch("react_agent.graph._get_db_url", return_value="postgresql://localhost/test"):
+    with patch(
+        "react_agent.graph._get_db_url", return_value="postgresql://localhost/test"
+    ):
         result = await pre_retrieve(state, config)
 
     assert result == {"retrieved_context": ""}
@@ -64,7 +68,9 @@ async def test_pre_retrieve_exception_graceful():
     config = {"configurable": {}}
 
     with (
-        patch("react_agent.graph._get_db_url", return_value="postgresql://localhost/test"),
+        patch(
+            "react_agent.graph._get_db_url", return_value="postgresql://localhost/test"
+        ),
         patch(
             "react_agent.tools.retrieve_documents",
             new_callable=AsyncMock,
@@ -82,7 +88,9 @@ async def test_pre_retrieve_short_query_skip():
     state = State(messages=[HumanMessage(content="ㅇㅋ", id="1")])
     config = {"configurable": {}}
 
-    with patch("react_agent.graph._get_db_url", return_value="postgresql://localhost/test"):
+    with patch(
+        "react_agent.graph._get_db_url", return_value="postgresql://localhost/test"
+    ):
         result = await pre_retrieve(state, config)
 
     assert result == {"retrieved_context": ""}
@@ -222,7 +230,7 @@ async def test_call_model_includes_retrieved_context():
     )
     config = {"configurable": {}}
 
-    with patch("react_agent.graph.ChatOpenAI") as mock_llm_cls:
+    with patch("react_agent.graph.load_chat_model") as mock_llm_cls:
         mock_llm_instance, mock_model = _make_call_model_mocks()
         mock_llm_cls.return_value = mock_llm_instance
 
@@ -245,7 +253,7 @@ async def test_call_model_retrieved_context_includes_dedup_instruction():
     )
     config = {"configurable": {}}
 
-    with patch("react_agent.graph.ChatOpenAI") as mock_llm_cls:
+    with patch("react_agent.graph.load_chat_model") as mock_llm_cls:
         mock_llm_instance, mock_model = _make_call_model_mocks()
         mock_llm_cls.return_value = mock_llm_instance
 
@@ -267,7 +275,7 @@ async def test_call_model_without_retrieved_context():
     )
     config = {"configurable": {}}
 
-    with patch("react_agent.graph.ChatOpenAI") as mock_llm_cls:
+    with patch("react_agent.graph.load_chat_model") as mock_llm_cls:
         mock_llm_instance, mock_model = _make_call_model_mocks()
         mock_llm_cls.return_value = mock_llm_instance
 
@@ -290,7 +298,7 @@ async def test_call_model_truncates_long_context():
     )
     config = {"configurable": {}}
 
-    with patch("react_agent.graph.ChatOpenAI") as mock_llm_cls:
+    with patch("react_agent.graph.load_chat_model") as mock_llm_cls:
         mock_llm_instance, mock_model = _make_call_model_mocks()
         mock_llm_cls.return_value = mock_llm_instance
 
@@ -317,7 +325,7 @@ async def test_call_model_truncate_preserves_summary():
     )
     config = {"configurable": {}}
 
-    with patch("react_agent.graph.ChatOpenAI") as mock_llm_cls:
+    with patch("react_agent.graph.load_chat_model") as mock_llm_cls:
         mock_llm_instance, mock_model = _make_call_model_mocks()
         mock_llm_cls.return_value = mock_llm_instance
 

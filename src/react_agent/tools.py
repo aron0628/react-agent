@@ -25,7 +25,11 @@ async def search(query: str) -> dict[str, Any] | None:
     for answering questions about current events.
     """
     configuration = Configuration.from_context()
-    logger.info("[tool:search] query=%r, max_results=%d", query, configuration.max_search_results)
+    logger.info(
+        "[tool:search] query=%r, max_results=%d",
+        query,
+        configuration.max_search_results,
+    )
     wrapped = TavilySearch(max_results=configuration.max_search_results)
     result = cast(dict[str, Any], await wrapped.ainvoke({"query": query}))
     result_count = len(result.get("results", [])) if isinstance(result, dict) else 0
@@ -104,6 +108,7 @@ async def retrieve_documents(query: str) -> str:
                         metadata = cluster.get("metadata")
                         if isinstance(metadata, str):
                             import json
+
                             try:
                                 metadata = json.loads(metadata)
                             except (json.JSONDecodeError, TypeError):
@@ -147,9 +152,7 @@ async def retrieve_documents(query: str) -> str:
             if config.enable_raptor:
                 logger.info("RAPTOR fallback to leaf search")
             if config.enable_hybrid_search:
-                results = await _hybrid_search(
-                    query, embedding, db_url, config
-                )
+                results = await _hybrid_search(query, embedding, db_url, config)
             else:
                 results = await search_documents(
                     embedding, db_url, config.rag_max_results, config.rag_max_distance
@@ -161,16 +164,16 @@ async def retrieve_documents(query: str) -> str:
 
         logger.info(
             "[tool:retrieve_documents] search — strategy=%s, results=%d",
-            "raptor" if config.enable_raptor else ("hybrid" if config.enable_hybrid_search else "dense"),
+            "raptor"
+            if config.enable_raptor
+            else ("hybrid" if config.enable_hybrid_search else "dense"),
             len(results),
         )
 
         # Batch grade documents
         grades = await grade_documents(query, results, config.rag_grading_model)
         relevant_indices = {g.index for g in grades.grades if g.is_relevant}
-        relevant_docs = [
-            doc for i, doc in enumerate(results) if i in relevant_indices
-        ]
+        relevant_docs = [doc for i, doc in enumerate(results) if i in relevant_indices]
         logger.info(
             "[tool:retrieve_documents] grading — model=%s, total=%d, relevant=%d",
             config.rag_grading_model,
@@ -193,18 +196,14 @@ async def retrieve_documents(query: str) -> str:
                 rewritten, config.embedding_model
             )
             if config.enable_hybrid_search:
-                results = await _hybrid_search(
-                    rewritten, embedding, db_url, config
-                )
+                results = await _hybrid_search(rewritten, embedding, db_url, config)
             else:
                 results = await search_documents(
                     embedding, db_url, config.rag_max_results, config.rag_max_distance
                 )
             if not results:
                 break
-            grades = await grade_documents(
-                rewritten, results, config.rag_grading_model
-            )
+            grades = await grade_documents(rewritten, results, config.rag_grading_model)
             relevant_indices = {g.index for g in grades.grades if g.is_relevant}
             relevant_docs = [
                 doc for i, doc in enumerate(results) if i in relevant_indices

@@ -39,8 +39,6 @@ async def authenticate(authorization: str | None) -> str:
 
     if not hmac.compare_digest(token, expected_key):
         logger.warning("Auth rejected: invalid API key")
-        raise Auth.exceptions.HTTPException(
-            status_code=401, detail="Invalid API key"
-        )
+        raise Auth.exceptions.HTTPException(status_code=401, detail="Invalid API key")
 
     return "service-user"

@@ -19,6 +19,8 @@ dependencies = [
     "langchain-upstage>=0.7.7",
     "tiktoken>=0.7.0",
     "kiwipiepy>=0.18.0",
+    "langchain-google-genai>=2.1.0",
+    "langchain-xai>=0.2.0",
 ]
 
 

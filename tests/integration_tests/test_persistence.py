@@ -35,9 +35,7 @@ async def test_conversation_persists_across_invocations() -> None:
         assert len(res1["messages"]) >= 2
 
         # Second invocation — same thread should retain context
-        res2 = await g.ainvoke(
-            {"messages": [("user", "What is my name?")]}, config
-        )
+        res2 = await g.ainvoke({"messages": [("user", "What is my name?")]}, config)
         last_content = str(res2["messages"][-1].content).lower()
         assert "alice" in last_content
 

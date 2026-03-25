@@ -4,13 +4,14 @@ import pytest
 
 from react_agent.rag import _tokenize_query, hybrid_merge
 
-
 # ---------------------------------------------------------------------------
 # hybrid_merge 테스트
 # ---------------------------------------------------------------------------
 
 
-def _dense(content: str, distance: float, job_id: str, element_index: int, page: int = 1) -> dict:
+def _dense(
+    content: str, distance: float, job_id: str, element_index: int, page: int = 1
+) -> dict:
     return {
         "content": content,
         "distance": distance,
@@ -21,7 +22,9 @@ def _dense(content: str, distance: float, job_id: str, element_index: int, page:
     }
 
 
-def _sparse(content: str, bm25_score: float, job_id: str, element_index: int, page: int = 1) -> dict:
+def _sparse(
+    content: str, bm25_score: float, job_id: str, element_index: int, page: int = 1
+) -> dict:
     return {
         "content": content,
         "bm25_score": bm25_score,
@@ -36,8 +39,8 @@ def test_hybrid_merge_alpha_1():
     """alpha=1.0 → Dense only: sparse-only result gets score 0, dense result ranks higher."""
     # 두 개의 dense 문서가 있어야 min-max 정규화에 범위가 생김
     dense_results = [
-        _dense("a_close", 0.1, "j1", 0),   # similarity=0.9 → normalized=1.0
-        _dense("a_far", 0.5, "j1", 2),      # similarity=0.5 → normalized=0.0
+        _dense("a_close", 0.1, "j1", 0),  # similarity=0.9 → normalized=1.0
+        _dense("a_far", 0.5, "j1", 2),  # similarity=0.5 → normalized=0.0
     ]
     sparse_results = [_sparse("b", 5.0, "j2", 1)]
 
@@ -59,8 +62,8 @@ def test_hybrid_merge_alpha_0():
     dense_results = [_dense("a", 0.2, "j1", 0)]
     # 두 개의 sparse 문서가 있어야 min-max 정규화에 범위가 생김
     sparse_results = [
-        _sparse("b_high", 5.0, "j2", 1),   # bm25 높음 → normalized=1.0
-        _sparse("b_low", 1.0, "j2", 2),    # bm25 낮음 → normalized=0.0
+        _sparse("b_high", 5.0, "j2", 1),  # bm25 높음 → normalized=1.0
+        _sparse("b_low", 1.0, "j2", 2),  # bm25 낮음 → normalized=0.0
     ]
 
     merged = hybrid_merge(dense_results, sparse_results, alpha=0.0)
@@ -155,7 +158,9 @@ _DEFAULT_MIN_LEN = 2
 
 def test_tokenize_query_korean():
     """한국어 쿼리 → 명사 키워드 추출, 조사/불용어 제거."""
-    tokens = _tokenize_query("삼성전자 반도체 투자 현황", _DEFAULT_POS, _DEFAULT_MIN_LEN)
+    tokens = _tokenize_query(
+        "삼성전자 반도체 투자 현황", _DEFAULT_POS, _DEFAULT_MIN_LEN
+    )
 
     assert isinstance(tokens, list)
     assert len(tokens) > 0

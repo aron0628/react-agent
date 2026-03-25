@@ -3,8 +3,53 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 from urllib.parse import quote_plus
+
+_settings_cache: dict[str, str] = {}
+_cache_timestamp: float = 0.0
+
+
+async def load_settings_cache(db_url: str) -> None:
+    """Query app_settings table and populate the in-memory settings cache.
+
+    Args:
+        db_url: PostgreSQL connection URL.
+    """
+    global _settings_cache, _cache_timestamp  # noqa: PLW0603
+    import psycopg
+    from psycopg.rows import dict_row  # type: ignore[import-not-found]
+
+    async with await psycopg.AsyncConnection.connect(
+        db_url, row_factory=dict_row
+    ) as conn:
+        cursor = await conn.execute("SELECT key, value FROM app_settings")
+        rows = await cursor.fetchall()
+        _settings_cache = {row["key"]: row["value"] for row in rows}
+        _cache_timestamp = time.time()
+
+
+def get_cached_settings() -> dict[str, str]:
+    """Return the in-memory settings cache.
+
+    Sync — safe to call from sync classmethods.
+
+    Returns:
+        A dict mapping setting keys to values.
+    """
+    return _settings_cache
+
+
+async def ensure_settings_loaded(db_url: str, ttl: float = 60.0) -> None:
+    """Refresh the settings cache if it is stale.
+
+    Args:
+        db_url: PostgreSQL connection URL.
+        ttl: Cache time-to-live in seconds. Defaults to 60.0.
+    """
+    if time.time() - _cache_timestamp > ttl:
+        await load_settings_cache(db_url)
 
 
 def get_database_url() -> str:

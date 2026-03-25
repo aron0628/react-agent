@@ -11,11 +11,12 @@ import logging
 import math
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import tiktoken
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
+
+from react_agent.utils import load_chat_model
 
 logger = logging.getLogger(__name__)
 
@@ -39,14 +40,18 @@ class DocumentGrade(BaseModel):
     """Relevance grade for a single document."""
 
     index: int = Field(description="Document index (0-based)")
-    is_relevant: bool = Field(description="Whether the document is relevant to the query")
+    is_relevant: bool = Field(
+        description="Whether the document is relevant to the query"
+    )
     reasoning: str = Field(description="Brief reasoning for the relevance grade")
 
 
 class GradeDocuments(BaseModel):
     """Batch relevance grades for retrieved documents."""
 
-    grades: list[DocumentGrade] = Field(description="Relevance grades for each document")
+    grades: list[DocumentGrade] = Field(
+        description="Relevance grades for each document"
+    )
 
 
 async def generate_query_embedding(text: str, model: str) -> list[float]:
@@ -218,8 +223,7 @@ async def grade_documents(
         GradeDocuments with relevance grades for each document.
     """
     docs_text = "\n\n".join(
-        f"[Document {i}]\n{doc.get('content', '')}"
-        for i, doc in enumerate(documents)
+        f"[Document {i}]\n{doc.get('content', '')}" for i, doc in enumerate(documents)
     )
 
     prompt = (
@@ -231,9 +235,23 @@ async def grade_documents(
         "Grade each document. Return a grade for every document index."
     )
 
-    llm = ChatOpenAI(model=model, temperature=0, streaming=False)
-    structured_llm = llm.with_structured_output(GradeDocuments)
-    result = await structured_llm.ainvoke(prompt, config={"callbacks": []})
+    llm = load_chat_model(model, temperature=0, streaming=False)
+    try:
+        structured_llm = llm.with_structured_output(GradeDocuments)
+    except (NotImplementedError, AttributeError):
+        # Fallback: invoke raw and parse JSON response
+        import json
+
+        raw = await llm.ainvoke(prompt, config={"callbacks": []})
+        raw_text = str(raw.content)
+        try:
+            data = json.loads(raw_text)
+            return GradeDocuments.model_validate(data)
+        except Exception:
+            return GradeDocuments(grades=[])
+    result = cast(
+        GradeDocuments, await structured_llm.ainvoke(prompt, config={"callbacks": []})
+    )
 
     # Validate indices are in range
     valid_grades = [
@@ -254,7 +272,7 @@ async def rewrite_query(original_query: str, model: str) -> str:
     Returns:
         A rewritten query optimized for document retrieval.
     """
-    llm = ChatOpenAI(model=model, temperature=0.3, streaming=False)
+    llm = load_chat_model(model, temperature=0.3, streaming=False)
     prompt = (
         "Rewrite the following query to improve document retrieval results. "
         "Make it more specific and use alternative keywords that might match "
@@ -396,9 +414,7 @@ async def _load_kiwi_config(db_url: str) -> dict:
     return _kiwi_config_cache
 
 
-def _tokenize_query(
-    query: str, pos_whitelist: list[str], min_length: int
-) -> list[str]:
+def _tokenize_query(query: str, pos_whitelist: list[str], min_length: int) -> list[str]:
     """쿼리 텍스트를 형태소 분석하여 검색용 키워드 리스트를 반환한다.
 
     2-stage 필터링:
@@ -453,9 +469,7 @@ async def search_bm25(
             db_url, row_factory=dict_row
         ) as conn:
             # 전체 문서 수 조회 (IDF 계산용)
-            cursor = await conn.execute(
-                "SELECT COUNT(*) AS cnt FROM document_keywords"
-            )
+            cursor = await conn.execute("SELECT COUNT(*) AS cnt FROM document_keywords")
             row = await cursor.fetchone()
             total_docs = row["cnt"] if row else 0
 
@@ -506,14 +520,16 @@ async def search_bm25(
                 if isinstance(metadata, str):
                     metadata = json.loads(metadata)
 
-                results.append({
-                    "content": row["content"],
-                    "metadata": metadata,
-                    "page": row["page"],
-                    "job_id": row["job_id"],
-                    "element_index": row["element_index"],
-                    "bm25_score": score,
-                })
+                results.append(
+                    {
+                        "content": row["content"],
+                        "metadata": metadata,
+                        "page": row["page"],
+                        "job_id": row["job_id"],
+                        "element_index": row["element_index"],
+                        "bm25_score": score,
+                    }
+                )
 
             # 점수 내림차순 정렬 후 top_k 제한
             results.sort(key=lambda x: x["bm25_score"], reverse=True)

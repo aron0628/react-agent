@@ -33,7 +33,7 @@ async def test_summarize_above_threshold_returns_remove_messages():
     state = State(messages=messages)
     config = {"configurable": {"summarization_threshold": 5}}
 
-    with patch("react_agent.graph.ChatOpenAI") as mock_llm_cls:
+    with patch("react_agent.graph.load_chat_model") as mock_llm_cls:
         mock_llm = AsyncMock()
         mock_llm.ainvoke.return_value = AIMessage(content="Summary of conversation")
         mock_llm_cls.return_value = mock_llm
@@ -56,7 +56,7 @@ async def test_summarize_above_threshold_returns_summary():
     state = State(messages=messages)
     config = {"configurable": {"summarization_threshold": 3}}
 
-    with patch("react_agent.graph.ChatOpenAI") as mock_llm_cls:
+    with patch("react_agent.graph.load_chat_model") as mock_llm_cls:
         mock_llm = AsyncMock()
         mock_llm.ainvoke.return_value = AIMessage(content="Test summary content")
         mock_llm_cls.return_value = mock_llm
@@ -77,7 +77,7 @@ async def test_call_model_includes_summary_in_prompt():
     )
     config = {"configurable": {}}
 
-    with patch("react_agent.graph.ChatOpenAI") as mock_llm_cls:
+    with patch("react_agent.graph.load_chat_model") as mock_llm_cls:
         mock_model = AsyncMock()
         mock_response = AIMessage(content="Response", id="resp1")
         mock_model.ainvoke.return_value = mock_response
@@ -104,7 +104,7 @@ async def test_call_model_without_summary_has_no_prefix():
     )
     config = {"configurable": {}}
 
-    with patch("react_agent.graph.ChatOpenAI") as mock_llm_cls:
+    with patch("react_agent.graph.load_chat_model") as mock_llm_cls:
         mock_model = AsyncMock()
         mock_response = AIMessage(content="Response", id="resp1")
         mock_model.ainvoke.return_value = mock_response

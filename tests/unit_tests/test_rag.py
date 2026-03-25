@@ -47,7 +47,9 @@ async def test_search_documents_sql_and_joins():
     mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
     mock_conn.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("psycopg.AsyncConnection.connect", new_callable=AsyncMock) as mock_connect:
+    with patch(
+        "psycopg.AsyncConnection.connect", new_callable=AsyncMock
+    ) as mock_connect:
         mock_connect.return_value = mock_conn
 
         from react_agent.rag import search_documents
@@ -85,9 +87,7 @@ async def test_search_documents_sql_and_joins():
 async def test_retrieve_no_results_returns_fallback():
     """Verify empty search results return a fallback message."""
     with (
-        patch(
-            "react_agent.configuration.Configuration.from_context"
-        ) as mock_config,
+        patch("react_agent.configuration.Configuration.from_context") as mock_config,
         patch("react_agent.db.get_database_url", return_value="postgresql://x"),
         patch(
             "react_agent.rag.generate_query_embedding",
@@ -123,9 +123,7 @@ async def test_retrieve_with_batch_grading_filters():
     )
 
     with (
-        patch(
-            "react_agent.configuration.Configuration.from_context"
-        ) as mock_config,
+        patch("react_agent.configuration.Configuration.from_context") as mock_config,
         patch("react_agent.db.get_database_url", return_value="postgresql://x"),
         patch(
             "react_agent.rag.generate_query_embedding",
@@ -170,9 +168,7 @@ async def test_rewrite_bounded_by_max_attempts():
         return f"rewritten: {query}"
 
     with (
-        patch(
-            "react_agent.configuration.Configuration.from_context"
-        ) as mock_config,
+        patch("react_agent.configuration.Configuration.from_context") as mock_config,
         patch("react_agent.db.get_database_url", return_value="postgresql://x"),
         patch(
             "react_agent.rag.generate_query_embedding",
@@ -217,9 +213,7 @@ def test_format_results_token_budget():
 async def test_retrieve_db_error_returns_message():
     """Verify DB connection failure returns a user-facing error message."""
     with (
-        patch(
-            "react_agent.configuration.Configuration.from_context"
-        ) as mock_config,
+        patch("react_agent.configuration.Configuration.from_context") as mock_config,
         patch(
             "react_agent.db.get_database_url",
             side_effect=RuntimeError("DB_HOST not set"),
@@ -237,9 +231,7 @@ async def test_retrieve_db_error_returns_message():
 async def test_dimension_mismatch_guard():
     """Verify dimension mismatch returns error message instead of crashing."""
     with (
-        patch(
-            "react_agent.configuration.Configuration.from_context"
-        ) as mock_config,
+        patch("react_agent.configuration.Configuration.from_context") as mock_config,
         patch("react_agent.db.get_database_url", return_value="postgresql://x"),
         patch(
             "react_agent.rag.generate_query_embedding",
@@ -266,7 +258,9 @@ async def test_search_raptor_summaries_sql():
     mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
     mock_conn.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("psycopg.AsyncConnection.connect", new_callable=AsyncMock) as mock_connect:
+    with patch(
+        "psycopg.AsyncConnection.connect", new_callable=AsyncMock
+    ) as mock_connect:
         mock_connect.return_value = mock_conn
 
         result = await search_raptor_summaries(
@@ -311,7 +305,9 @@ async def test_search_leaf_chunks_by_indices_sql():
     mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
     mock_conn.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("psycopg.AsyncConnection.connect", new_callable=AsyncMock) as mock_connect:
+    with patch(
+        "psycopg.AsyncConnection.connect", new_callable=AsyncMock
+    ) as mock_connect:
         mock_connect.return_value = mock_conn
 
         result = await search_leaf_chunks_by_indices(
@@ -626,7 +622,12 @@ async def test_retrieve_raptor_malformed_metadata_skips():
 async def test_retrieve_raptor_exception_falls_back():
     """RAPTOR search exception triggers fallback to leaf search."""
     leaf_docs = [
-        {"content": "Exception fallback", "filename": "e.pdf", "page": 1, "distance": 0.1},
+        {
+            "content": "Exception fallback",
+            "filename": "e.pdf",
+            "page": 1,
+            "distance": 0.1,
+        },
     ]
     grades = GradeDocuments(
         grades=[DocumentGrade(index=0, is_relevant=True, reasoning="Match")]
