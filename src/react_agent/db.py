@@ -19,7 +19,7 @@ async def load_settings_cache(db_url: str) -> None:
     """
     global _settings_cache, _cache_timestamp  # noqa: PLW0603
     import psycopg
-    from psycopg.rows import dict_row  # type: ignore[import-not-found]
+    from psycopg.rows import dict_row
 
     async with await psycopg.AsyncConnection.connect(
         db_url, row_factory=dict_row
@@ -136,7 +136,7 @@ async def get_user_threads(db_url: str, user_id: str) -> list[dict[str, Any]]:
         A list of thread dictionaries with thread_id, title, created_at, updated_at.
     """
     import psycopg
-    from psycopg.rows import dict_row  # type: ignore[import-not-found]
+    from psycopg.rows import dict_row
 
     async with await psycopg.AsyncConnection.connect(
         db_url, row_factory=dict_row

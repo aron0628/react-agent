@@ -266,6 +266,8 @@ async def _hybrid_search(
         )
 
     # Dense + BM25 병렬 실행
+    dense_results: list[dict[str, Any]]
+    sparse_results: list[dict[str, Any]]
     dense_results, sparse_results = await asyncio.gather(
         search_documents(
             embedding, db_url, config.rag_max_results, config.rag_max_distance

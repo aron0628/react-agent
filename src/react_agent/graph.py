@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Literal, cast
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.config import var_child_runnable_config  # type: ignore[attr-defined]
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -97,6 +98,7 @@ async def summarize_conversation(
     )
 
     # Call LLM for summarization
+    logger.info("[summarize_conversation] model=%s", configuration.summarization_model)
     llm = load_chat_model(configuration.summarization_model, temperature=0)
     summary_response = await llm.ainvoke(
         SUMMARIZATION_PROMPT.format(conversation=conversation_text)
@@ -184,9 +186,7 @@ async def pre_retrieve(state: State, config: RunnableConfig) -> dict[str, Any]:
         from react_agent.tools import retrieve_documents
 
         # Strip callbacks from the current config while keeping configurable
-        _cfg: _RC = {**config, "callbacks": []}  # type: ignore[typeddict-item]
-        from langgraph.config import var_child_runnable_config
-
+        _cfg: _RC = {**config, "callbacks": []}
         _token = var_child_runnable_config.set(_cfg)
         try:
             result = await retrieve_documents(query)
@@ -266,7 +266,7 @@ async def call_model(
             )
 
     # Get the model's response
-    response = cast(
+    response = cast(  # type: ignore[redundant-cast]
         AIMessage,
         await model.ainvoke(
             [{"role": "system", "content": system_message}, *state.messages]
@@ -306,6 +306,7 @@ async def call_model(
                 configurable = config.get("configurable") or {}
                 thread_id = configurable.get("thread_id", "")
                 if thread_id:
+                    logger.info("[title_generation] model=%s", configuration.summarization_model)
                     title_llm = load_chat_model(
                         configuration.summarization_model, temperature=0
                     )
@@ -388,7 +389,7 @@ def create_graph(
     Returns:
         A compiled LangGraph graph.
     """
-    builder = StateGraph(State, input=InputState, config_schema=Configuration)
+    builder = StateGraph(State, input=InputState, config_schema=Configuration)  # type: ignore[call-arg]
 
     builder.add_node(summarize_conversation)
     builder.add_node(pre_retrieve)

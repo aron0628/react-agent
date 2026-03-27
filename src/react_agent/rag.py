@@ -89,7 +89,7 @@ async def search_documents(
         A list of document dicts with content, metadata, and distance.
     """
     import psycopg
-    from psycopg.rows import dict_row  # type: ignore[import-not-found]
+    from psycopg.rows import dict_row
 
     embedding_str = str(query_embedding)
 
@@ -139,7 +139,7 @@ async def search_raptor_summaries(
         content, metadata (containing source_indices), and distance.
     """
     import psycopg
-    from psycopg.rows import dict_row  # type: ignore[import-not-found]
+    from psycopg.rows import dict_row
 
     embedding_str = str(query_embedding)
 
@@ -184,7 +184,7 @@ async def search_leaf_chunks_by_indices(
         these are cluster-matched, not distance-ranked.
     """
     import psycopg
-    from psycopg.rows import dict_row  # type: ignore[import-not-found]
+    from psycopg.rows import dict_row
 
     sql = (
         "SELECT de.id, de.job_id, de.element_index, de.page, de.element_type, "
@@ -235,6 +235,7 @@ async def grade_documents(
         "Grade each document. Return a grade for every document index."
     )
 
+    logger.info("[grade_documents] model=%s", model)
     llm = load_chat_model(model, temperature=0, streaming=False)
     try:
         structured_llm = llm.with_structured_output(GradeDocuments)
@@ -272,6 +273,7 @@ async def rewrite_query(original_query: str, model: str) -> str:
     Returns:
         A rewritten query optimized for document retrieval.
     """
+    logger.info("[rewrite_query] model=%s", model)
     llm = load_chat_model(model, temperature=0.3, streaming=False)
     prompt = (
         "Rewrite the following query to improve document retrieval results. "
@@ -335,7 +337,7 @@ def format_results(documents: list[dict[str, Any]], max_tokens: int) -> str:
 
 _kiwi: Any = None
 _stopwords: set[str] = set()
-_kiwi_config_cache: dict = {}
+_kiwi_config_cache: dict[str, Any] = {}
 _kiwi_config_loaded_at: float = 0
 
 
@@ -346,7 +348,7 @@ def _init_kiwi() -> Any:
     if _kiwi is not None:
         return _kiwi
 
-    from kiwipiepy import Kiwi
+    from kiwipiepy import Kiwi  # type: ignore[import-untyped]
 
     _kiwi = Kiwi()
 
@@ -362,7 +364,7 @@ def _init_kiwi() -> Any:
     return _kiwi
 
 
-async def _load_kiwi_config(db_url: str) -> dict:
+async def _load_kiwi_config(db_url: str) -> dict[str, Any]:
     """keyword_config 테이블에서 POS 화이트리스트와 최소 키워드 길이를 로드한다.
 
     5분간 캐시하여 반복 DB 조회를 방지한다.
@@ -381,7 +383,7 @@ async def _load_kiwi_config(db_url: str) -> dict:
 
     try:
         import psycopg
-        from psycopg.rows import dict_row  # type: ignore[import-not-found]
+        from psycopg.rows import dict_row
 
         async with await psycopg.AsyncConnection.connect(
             db_url, row_factory=dict_row
@@ -441,7 +443,7 @@ async def search_bm25(
     query_tokens: list[str],
     db_url: str,
     top_k: int = 20,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """BM25 키워드 검색을 수행한다.
 
     document_keywords 테이블에서 쿼리 토큰과 매칭되는 문서를 검색하고,
@@ -463,7 +465,7 @@ async def search_bm25(
         import json
 
         import psycopg
-        from psycopg.rows import dict_row  # type: ignore[import-not-found]
+        from psycopg.rows import dict_row
 
         async with await psycopg.AsyncConnection.connect(
             db_url, row_factory=dict_row
@@ -501,7 +503,7 @@ async def search_bm25(
             rows = await cursor.fetchall()
 
             # BM25 점수 계산
-            results: list[dict] = []
+            results: list[dict[str, Any]] = []
             for row in rows:
                 tf_scores = row["tf_scores"]
                 if isinstance(tf_scores, str):
@@ -541,10 +543,10 @@ async def search_bm25(
 
 
 def hybrid_merge(
-    dense_results: list[dict],
-    sparse_results: list[dict],
+    dense_results: list[dict[str, Any]],
+    sparse_results: list[dict[str, Any]],
     alpha: float = 0.7,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Dense(벡터) 검색과 Sparse(BM25) 검색 결과를 하이브리드 병합한다.
 
     Min-max 정규화 후 가중합으로 최종 점수를 산출한다.
@@ -585,7 +587,7 @@ def hybrid_merge(
     all_keys = set(dense_scores.keys()) | set(sparse_scores.keys())
 
     # 문서 데이터 인덱스 구축
-    doc_map: dict[tuple[str, int], dict] = {}
+    doc_map: dict[tuple[str, int], dict[str, Any]] = {}
     for doc in dense_results:
         key = (doc.get("job_id", ""), doc.get("element_index", 0))
         doc_map[key] = doc
@@ -595,7 +597,7 @@ def hybrid_merge(
             doc_map[key] = doc
 
     # 하이브리드 점수 계산 및 병합
-    merged: list[dict] = []
+    merged: list[dict[str, Any]] = []
     for key in all_keys:
         dense_norm = dense_scores.get(key, 0.0)
         sparse_norm = sparse_scores.get(key, 0.0)
