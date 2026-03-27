@@ -17,6 +17,39 @@ _KEY_ALIASES: dict[str, str] = {
     "summary_message_threshold": "summarization_threshold",
 }
 
+# Fields that callers must not override via configurable dict
+_CALLER_BLOCKLIST: set[str] = {"system_prompt", "model"}
+
+# Allowlist of valid model identifiers (with and without provider prefix)
+_ALLOWED_MODELS: set[str] = {
+    "openai/gpt-4.1",
+    "openai/gpt-4.1-mini",
+    "openai/gpt-4.1-nano",
+    "openai/gpt-4o",
+    "openai/gpt-4o-mini",
+    "openai/gpt-4-turbo",
+    "openai/o1",
+    "openai/o1-mini",
+    "openai/o3-mini",
+    "anthropic/claude-opus-4-5",
+    "anthropic/claude-sonnet-4-5",
+    "anthropic/claude-haiku-3-5",
+    "anthropic/claude-3-5-sonnet-20241022",
+    "anthropic/claude-3-5-haiku-20241022",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4.1-nano",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4-turbo",
+    "o1",
+    "o1-mini",
+    "o3-mini",
+}
+
+# Maximum allowed length for system_prompt loaded from DB
+_MAX_SYSTEM_PROMPT_LENGTH: int = 10000
+
 
 def _apply_key_aliases(settings: dict[str, str]) -> dict[str, str]:
     """Remap DB setting keys to Configuration field names.
@@ -104,6 +137,45 @@ def _is_valid_model_name(name: str) -> bool:
         return False
     except ValueError:
         return True
+
+
+def _validate_db_settings(merged: dict[str, Any]) -> dict[str, Any]:
+    """Validate and sanitize DB-sourced settings before applying to Configuration.
+
+    Args:
+        merged: Settings dict loaded from the database (post alias remapping).
+
+    Returns:
+        A sanitized copy with invalid model names and oversized prompts removed.
+    """
+    result = dict(merged)
+
+    # Validate model fields against the allowlist
+    for fname in _MODEL_FIELDS:
+        val = result.get(fname)
+        if isinstance(val, str):
+            normalized = val.strip()
+            if normalized not in _ALLOWED_MODELS:
+                logger.warning(
+                    "[config] DB model value %r for field %r not in allowlist, "
+                    "discarding (will use default)",
+                    val,
+                    fname,
+                )
+                del result[fname]
+
+    # Enforce system_prompt length limit
+    prompt_val = result.get("system_prompt")
+    if isinstance(prompt_val, str) and len(prompt_val) > _MAX_SYSTEM_PROMPT_LENGTH:
+        logger.warning(
+            "[config] DB system_prompt length %d exceeds max %d, "
+            "discarding (will use default)",
+            len(prompt_val),
+            _MAX_SYSTEM_PROMPT_LENGTH,
+        )
+        del result["system_prompt"]
+
+    return result
 
 
 def _validate_model_fields(instance: Configuration) -> None:
@@ -278,10 +350,18 @@ class Configuration:
         config = ensure_config(config)
         configurable = config.get("configurable") or {}
         _fields = {f.name for f in fields(cls) if f.init}
-        # Start with cached DB settings, then override with configurable values
+        # Start with cached DB settings (validated), then override with configurable values
         cached = _apply_key_aliases(get_cached_settings())
-        merged: dict[str, Any] = {k: v for k, v in cached.items() if k in _fields}
-        merged.update({k: v for k, v in configurable.items() if k in _fields})
+        db_fields: dict[str, Any] = {k: v for k, v in cached.items() if k in _fields}
+        db_fields = _validate_db_settings(db_fields)
+        merged: dict[str, Any] = dict(db_fields)
+        merged.update(
+            {
+                k: v
+                for k, v in configurable.items()
+                if k in _fields and k not in _CALLER_BLOCKLIST
+            }
+        )
         merged = _coerce_field_types(merged, cls)
         instance = cls(**merged)
         _validate_model_fields(instance)
@@ -299,10 +379,18 @@ class Configuration:
         config = ensure_config(config)
         configurable = config.get("configurable") or {}
         _fields = {f.name for f in fields(cls) if f.init}
-        # Start with cached DB settings, then override with configurable values
+        # Start with cached DB settings (validated), then override with configurable values
         cached = _apply_key_aliases(get_cached_settings())
-        merged: dict[str, Any] = {k: v for k, v in cached.items() if k in _fields}
-        merged.update({k: v for k, v in configurable.items() if k in _fields})
+        db_fields: dict[str, Any] = {k: v for k, v in cached.items() if k in _fields}
+        db_fields = _validate_db_settings(db_fields)
+        merged: dict[str, Any] = dict(db_fields)
+        merged.update(
+            {
+                k: v
+                for k, v in configurable.items()
+                if k in _fields and k not in _CALLER_BLOCKLIST
+            }
+        )
         merged = _coerce_field_types(merged, cls)
         instance = cls(**merged)
         _validate_model_fields(instance)

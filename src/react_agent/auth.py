@@ -16,9 +16,11 @@ async def authenticate(authorization: str | None) -> str:
     """Validate API key from Authorization header."""
     expected_key = os.environ.get("LANGGRAPH_AUTH_KEY", "")
     if not expected_key:
-        logger.warning("Auth rejected: LANGGRAPH_AUTH_KEY not configured")
+        logger.critical(
+            "LANGGRAPH_AUTH_KEY is not configured — all requests will be rejected"
+        )
         raise Auth.exceptions.HTTPException(
-            status_code=500, detail="Auth not configured"
+            status_code=401, detail="Service unavailable"
         )
 
     if not authorization:

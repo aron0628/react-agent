@@ -27,9 +27,15 @@ from react_agent.tools import TOOLS
 from react_agent.utils import load_chat_model
 
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 MAX_CONTEXT_CHARS = 16000
 """Max combined character length for summary + retrieved_context in the system prompt."""
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 _GREETING_PATTERN = re.compile(
     r"^(안녕|hi|hello|hey|thanks|thank you|감사|고마워|bye|ㅎㅇ|ㅂㅂ)[\s!?.]*$",
@@ -336,12 +342,18 @@ async def call_model(
                         if langgraph_auth_key:
                             headers["Authorization"] = f"Bearer {langgraph_auth_key}"
 
-                        async with httpx.AsyncClient() as http_client:
-                            await http_client.patch(
-                                f"{langgraph_api_url}/threads/{thread_id}",
-                                json={"metadata": {"title": title}},
-                                headers=headers,
-                                timeout=5.0,
+                        if _UUID_RE.match(thread_id):
+                            async with httpx.AsyncClient() as http_client:
+                                await http_client.patch(
+                                    f"{langgraph_api_url}/threads/{thread_id}",
+                                    json={"metadata": {"title": title}},
+                                    headers=headers,
+                                    timeout=5.0,
+                                )
+                        else:
+                            logger.warning(
+                                "[title_generation] skipping — thread_id failed UUID validation: %r",
+                                thread_id,
                             )
                     except Exception:
                         logger.exception("Failed to update LangGraph thread metadata")
