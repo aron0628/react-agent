@@ -2,14 +2,75 @@
 
 from __future__ import annotations
 
+import logging
 import os
-from dataclasses import dataclass, field, fields
+from dataclasses import MISSING, dataclass, field, fields
 from typing import Annotated, Any
 
 from langchain_core.runnables import RunnableConfig, ensure_config
 from langgraph.config import get_config
 
 from react_agent import prompts
+
+# DB key → Configuration field name aliases
+_KEY_ALIASES: dict[str, str] = {
+    "summary_message_threshold": "summarization_threshold",
+}
+
+
+def _apply_key_aliases(settings: dict[str, str]) -> dict[str, str]:
+    """Remap DB setting keys to Configuration field names.
+
+    Args:
+        settings: Raw key-value settings from the database.
+
+    Returns:
+        A new dict with aliased keys remapped to their canonical field names.
+    """
+    return {_KEY_ALIASES.get(k, k): v for k, v in settings.items()}
+
+
+def _coerce_field_types(merged: dict[str, Any], cls: type) -> dict[str, Any]:
+    """Coerce string values from DB to match dataclass field types.
+
+    Args:
+        merged: Merged settings dict (may contain string values from DB).
+        cls: The dataclass class to inspect for field defaults.
+
+    Returns:
+        A new dict with values coerced to the correct Python types.
+    """
+    type_map: dict[str, type] = {}
+    for f in fields(cls):
+        if f.default is not MISSING:
+            type_map[f.name] = type(f.default)
+        elif f.default_factory is not MISSING:
+            type_map[f.name] = type(f.default_factory())
+
+    result: dict[str, Any] = {}
+    for k, v in merged.items():
+        if isinstance(v, str) and k in type_map:
+            target = type_map[k]
+            try:
+                if target is int:
+                    result[k] = int(v)
+                elif target is float:
+                    result[k] = float(v)
+                elif target is bool:
+                    result[k] = v.lower() in ("true", "1", "yes")
+                else:
+                    result[k] = v
+            except (ValueError, TypeError):
+                result[k] = v
+        else:
+            result[k] = v
+    return result
+
+
+logger = logging.getLogger(__name__)
+
+# Fields that hold LLM model identifiers
+_MODEL_FIELDS = {"model", "summarization_model", "rag_grading_model"}
 
 
 def _ensure_provider_prefix(model_name: str) -> str:
@@ -24,6 +85,48 @@ def _ensure_provider_prefix(model_name: str) -> str:
     if "/" not in model_name:
         return f"openai/{model_name}"
     return model_name
+
+
+def _is_valid_model_name(name: str) -> bool:
+    """Check if a string looks like a valid model name (not a pure number).
+
+    Args:
+        name: The model name to validate.
+
+    Returns:
+        True if the name looks like a valid model identifier.
+    """
+    stripped = name.strip()
+    if not stripped:
+        return False
+    try:
+        float(stripped)
+        return False
+    except ValueError:
+        return True
+
+
+def _validate_model_fields(instance: Configuration) -> None:
+    """Validate and fix model fields, falling back to defaults for invalid values.
+
+    Args:
+        instance: A Configuration instance to validate in-place.
+    """
+    defaults = {f.name: f.default for f in fields(instance) if f.name in _MODEL_FIELDS}
+    for fname in _MODEL_FIELDS:
+        val = getattr(instance, fname, None)
+        if isinstance(val, str):
+            if not _is_valid_model_name(val):
+                default_val = defaults.get(fname, "openai/gpt-4.1-mini")
+                logger.warning(
+                    "[config] invalid model name %r for field %r, "
+                    "falling back to default %r",
+                    val,
+                    fname,
+                    default_val,
+                )
+                val = str(default_val)
+            setattr(instance, fname, _ensure_provider_prefix(val))
 
 
 @dataclass(kw_only=True)
@@ -176,16 +279,12 @@ class Configuration:
         configurable = config.get("configurable") or {}
         _fields = {f.name for f in fields(cls) if f.init}
         # Start with cached DB settings, then override with configurable values
-        cached = get_cached_settings()
+        cached = _apply_key_aliases(get_cached_settings())
         merged: dict[str, Any] = {k: v for k, v in cached.items() if k in _fields}
         merged.update({k: v for k, v in configurable.items() if k in _fields})
+        merged = _coerce_field_types(merged, cls)
         instance = cls(**merged)
-        # Apply provider prefix to model-type fields
-        _model_fields = {"model", "summarization_model", "rag_grading_model"}
-        for fname in _model_fields:
-            val = getattr(instance, fname, None)
-            if isinstance(val, str):
-                setattr(instance, fname, _ensure_provider_prefix(val))
+        _validate_model_fields(instance)
         return instance
 
     @classmethod
@@ -201,14 +300,10 @@ class Configuration:
         configurable = config.get("configurable") or {}
         _fields = {f.name for f in fields(cls) if f.init}
         # Start with cached DB settings, then override with configurable values
-        cached = get_cached_settings()
+        cached = _apply_key_aliases(get_cached_settings())
         merged: dict[str, Any] = {k: v for k, v in cached.items() if k in _fields}
         merged.update({k: v for k, v in configurable.items() if k in _fields})
+        merged = _coerce_field_types(merged, cls)
         instance = cls(**merged)
-        # Apply provider prefix to model-type fields
-        _model_fields = {"model", "summarization_model", "rag_grading_model"}
-        for fname in _model_fields:
-            val = getattr(instance, fname, None)
-            if isinstance(val, str):
-                setattr(instance, fname, _ensure_provider_prefix(val))
+        _validate_model_fields(instance)
         return instance

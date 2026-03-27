@@ -266,7 +266,7 @@ async def call_model(
             )
 
     # Get the model's response
-    response = cast(  # type: ignore[redundant-cast]
+    response = cast(
         AIMessage,
         await model.ainvoke(
             [{"role": "system", "content": system_message}, *state.messages]
@@ -306,7 +306,9 @@ async def call_model(
                 configurable = config.get("configurable") or {}
                 thread_id = configurable.get("thread_id", "")
                 if thread_id:
-                    logger.info("[title_generation] model=%s", configuration.summarization_model)
+                    logger.info(
+                        "[title_generation] model=%s", configuration.summarization_model
+                    )
                     title_llm = load_chat_model(
                         configuration.summarization_model, temperature=0
                     )

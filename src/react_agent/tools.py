@@ -26,7 +26,7 @@ async def search(query: str) -> dict[str, Any] | None:
     """
     configuration = Configuration.from_context()
     logger.info(
-        "[tool:search] query=%r, max_results=%d",
+        "[tool:search] query=%r, max_results=%s",
         query,
         configuration.max_search_results,
     )
