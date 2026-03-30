@@ -9,5 +9,8 @@
   "auth": {
     "path": "./src/react_agent/auth.py:auth"
   },
+  "http": {
+    "app": "./src/react_agent/custom_routes.py:app"
+  },
   "env": ".env"
 }

@@ -9,6 +9,7 @@ from urllib.parse import quote_plus
 
 _settings_cache: dict[str, str] = {}
 _cache_timestamp: float = 0.0
+_last_updated_at: str | None = None
 
 
 async def load_settings_cache(db_url: str) -> None:
@@ -17,16 +18,19 @@ async def load_settings_cache(db_url: str) -> None:
     Args:
         db_url: PostgreSQL connection URL.
     """
-    global _settings_cache, _cache_timestamp  # noqa: PLW0603
+    global _settings_cache, _cache_timestamp, _last_updated_at  # noqa: PLW0603
     import psycopg
     from psycopg.rows import dict_row
 
     async with await psycopg.AsyncConnection.connect(
         db_url, row_factory=dict_row
     ) as conn:
-        cursor = await conn.execute("SELECT key, value FROM app_settings")
+        cursor = await conn.execute("SELECT key, value, updated_at FROM app_settings")
         rows = await cursor.fetchall()
         _settings_cache = {row["key"]: row["value"] for row in rows}
+        # Track the latest updated_at for change detection
+        if rows:
+            _last_updated_at = str(max(row["updated_at"] for row in rows))
         _cache_timestamp = time.time()
 
 
@@ -41,15 +45,46 @@ def get_cached_settings() -> dict[str, str]:
     return _settings_cache
 
 
-async def ensure_settings_loaded(db_url: str, ttl: float = 60.0) -> None:
-    """Refresh the settings cache if it is stale.
+def _bump_cache_timestamp() -> None:
+    """Update cache timestamp without reloading data."""
+    global _cache_timestamp  # noqa: PLW0603
+    _cache_timestamp = time.time()
+
+
+def invalidate_settings_cache() -> None:
+    """Force the settings cache to reload on next ensure_settings_loaded call."""
+    global _cache_timestamp  # noqa: PLW0603
+    _cache_timestamp = 0.0
+
+
+async def ensure_settings_loaded(db_url: str, ttl: float = 30.0) -> None:
+    """Refresh the settings cache if DB settings have changed.
+
+    Uses a two-tier strategy:
+    1. Within TTL: skip entirely (no DB hit).
+    2. After TTL: lightweight MAX(updated_at) check. Only full-reload if changed.
 
     Args:
         db_url: PostgreSQL connection URL.
-        ttl: Cache time-to-live in seconds. Defaults to 60.0.
+        ttl: Minimum seconds between DB version checks. Defaults to 30.0.
     """
-    if time.time() - _cache_timestamp > ttl:
+    if time.time() - _cache_timestamp <= ttl:
+        return
+
+    import psycopg
+
+    async with await psycopg.AsyncConnection.connect(db_url) as conn:
+        cursor = await conn.execute(
+            "SELECT MAX(updated_at) AS max_updated FROM app_settings"
+        )
+        row = await cursor.fetchone()
+        db_max = str(row[0]) if row and row[0] else None
+
+    if db_max != _last_updated_at:
         await load_settings_cache(db_url)
+    else:
+        # DB unchanged — just bump the timestamp to avoid re-checking within TTL
+        _bump_cache_timestamp()
 
 
 def get_database_url() -> str:

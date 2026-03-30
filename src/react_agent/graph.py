@@ -328,7 +328,15 @@ async def call_model(
                             }
                         ]
                     )
-                    title = str(title_response.content).strip()[:50]
+                    raw = title_response.content
+                    if isinstance(raw, list):
+                        title = " ".join(
+                            block["text"]
+                            for block in raw
+                            if isinstance(block, dict) and block.get("type") == "text"
+                        ).strip()[:50]
+                    else:
+                        title = str(raw).strip()[:50]
 
                     # Write title to LangGraph thread metadata (single source of truth)
                     try:
