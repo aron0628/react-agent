@@ -18,7 +18,7 @@ _KEY_ALIASES: dict[str, str] = {
 }
 
 # Fields that callers must not override via configurable dict
-_CALLER_BLOCKLIST: set[str] = {"system_prompt", "model"}
+_CALLER_BLOCKLIST: set[str] = {"system_prompt", "model", "show_model_name"}
 
 # Allowlist of valid model identifiers (with and without provider prefix)
 _ALLOWED_MODELS: set[str] = {
@@ -331,6 +331,11 @@ class Configuration:
     raptor_top_k: int = field(
         default=5,
         metadata={"description": "Max RAPTOR summary clusters to retrieve in Stage 1."},
+    )
+
+    show_model_name: bool = field(
+        default=True,
+        metadata={"description": "채팅 응답에 사용된 모델명 표시 여부."},
     )
 
     enable_hybrid_search: bool = field(

@@ -279,6 +279,10 @@ async def call_model(
         ),
     )
 
+    # Strip model_name from response metadata if admin disabled it
+    if not configuration.show_model_name:
+        response.response_metadata.pop("model_name", None)
+
     # Log response details
     tool_names = (
         [tc["name"] for tc in response.tool_calls] if response.tool_calls else []
