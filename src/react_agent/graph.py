@@ -232,7 +232,7 @@ async def call_model(
     logger.info("[call_model] start — model=%s", configuration.model)
 
     # Initialize the model with tool binding. Change the model or add more tools here.
-    llm = load_chat_model(configuration.model, temperature=0.1)
+    llm = load_chat_model(configuration.model, temperature=0.1, streaming=True)
     model = llm.bind_tools(TOOLS)
 
     # Format the system prompt. Customize this to change the agent's behavior.
