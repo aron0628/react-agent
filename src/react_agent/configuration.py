@@ -22,6 +22,9 @@ _CALLER_BLOCKLIST: set[str] = {"system_prompt", "model"}
 
 # Allowlist of valid model identifiers (with and without provider prefix)
 _ALLOWED_MODELS: set[str] = {
+    # OpenAI
+    "openai/gpt-5.4-mini",
+    "openai/gpt-5.4-nano",
     "openai/gpt-4.1",
     "openai/gpt-4.1-mini",
     "openai/gpt-4.1-nano",
@@ -31,11 +34,25 @@ _ALLOWED_MODELS: set[str] = {
     "openai/o1",
     "openai/o1-mini",
     "openai/o3-mini",
+    # Anthropic
     "anthropic/claude-opus-4-5",
     "anthropic/claude-sonnet-4-5",
     "anthropic/claude-haiku-3-5",
     "anthropic/claude-3-5-sonnet-20241022",
     "anthropic/claude-3-5-haiku-20241022",
+    # Google
+    "google_genai/gemini-3.1-pro-preview",
+    "google_genai/gemini-3.1-flash-lite-preview",
+    "google_genai/gemini-3-flash-preview",
+    # xAI
+    "xai/grok-4.20-0309-reasoning",
+    "xai/grok-4.20-0309-non-reasoning",
+    "xai/grok-4.20-multi-agent-0309",
+    "xai/grok-4-1-fast-reasoning",
+    "xai/grok-4-1-fast-non-reasoning",
+    # OpenAI (without provider prefix)
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
     "gpt-4.1",
     "gpt-4.1-mini",
     "gpt-4.1-nano",
