@@ -121,6 +121,10 @@ LANGSMITH_PROJECT=ReAct-Agent-Template
 | `utils.py` | 미테스트 (현재 미사용 모듈) |
 | `graph.py` | 통합 테스트에서만 커버 (단위 테스트 없음) |
 
+## Deployment
+
+배포 방식(LangGraph Cloud vs 셀프 호스팅), Docker Compose 구성, 실행 방법은 [docs/deployment.md](docs/deployment.md) 참조.
+
 ## CI/CD
 
 - **Unit tests** (`unit-tests.yml`): push(main)/PR/수동 트리거. Python 3.11/3.12 매트릭스. uv → ruff check → mypy strict → codespell → pytest
