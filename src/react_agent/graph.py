@@ -233,7 +233,13 @@ async def call_model(
 
     # Initialize the model with tool binding. Change the model or add more tools here.
     llm = load_chat_model(configuration.model, temperature=0.1, streaming=True)
-    model = llm.bind_tools(TOOLS)
+
+    # 웹검색 토글: enable_web_search=False이면 search 도구 제외
+    if configuration.enable_web_search:
+        tools = TOOLS
+    else:
+        tools = [t for t in TOOLS if getattr(t, "name", t.__name__) != "search"]
+    model = llm.bind_tools(tools)
 
     # Format the system prompt. Customize this to change the agent's behavior.
     system_message = configuration.system_prompt.format(
@@ -279,6 +285,12 @@ async def call_model(
         ),
     )
 
+    # 웹검색 비활성화 시 hallucination 방어: search tool_call 제거
+    if not configuration.enable_web_search and response.tool_calls:
+        response.tool_calls = [
+            tc for tc in response.tool_calls if tc["name"] != "search"
+        ]
+
     # Strip model_name from response metadata if admin disabled it
     if not configuration.show_model_name:
         response.response_metadata.pop("model_name", None)
@@ -307,6 +319,88 @@ async def call_model(
                 )
             ]
         }
+
+    # 최종 답변 시 출처 표시
+    if not response.tool_calls and response.content:
+        import json as _json
+
+        from langchain_core.messages import ToolMessage as _TM
+
+        model_display = (
+            configuration.model.split("/")[-1]
+            if "/" in configuration.model
+            else configuration.model
+        )
+
+        # 출처 유형 판별 + 웹검색 URL 수집
+        has_web_search = False
+        has_rag_docs = bool(state.retrieved_context)
+        search_urls: list[tuple[str, str]] = []  # (title, url)
+        for msg in state.messages:
+            if not isinstance(msg, _TM) or not isinstance(msg.content, str):
+                continue
+            if "찾지 못했습니다" in msg.content or "오류" in msg.content:
+                continue
+            if len(msg.content) <= 50:
+                continue
+            msg_name = getattr(msg, "name", "")
+            if msg_name == "search":
+                has_web_search = True
+                # Tavily 검색 결과에서 URL 추출
+                try:
+                    data = _json.loads(msg.content)
+                    results = []
+                    if isinstance(data, dict):
+                        results = data.get("results", [])
+                    elif isinstance(data, list):
+                        results = data
+                    for r in results:
+                        if isinstance(r, dict) and r.get("url"):
+                            title = r.get("title", r["url"])
+                            search_urls.append((title, r["url"]))
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+            elif msg_name == "retrieve_documents":
+                has_rag_docs = True
+
+        def _append_source(text: str) -> None:
+            nonlocal response
+            if isinstance(response.content, str):
+                response.content += text
+            elif isinstance(response.content, list):
+                response.content.append({"type": "text", "text": text})
+
+        def _prepend_notice(text: str) -> None:
+            nonlocal response
+            if isinstance(response.content, str):
+                response.content = text + response.content
+            elif isinstance(response.content, list):
+                response.content.insert(0, {"type": "text", "text": text})
+
+        if has_web_search:
+            # URL 목록을 마크다운 링크로 구성 (중복 제거)
+            seen_urls: set[str] = set()
+            unique_urls: list[tuple[str, str]] = []
+            for title, url in search_urls:
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    unique_urls.append((title, url))
+            url_lines = "\n".join(
+                f"- [{title}]({url})" for title, url in unique_urls
+            )
+            source_label = "웹검색 + 문서 검색" if has_rag_docs else "웹검색"
+            source_text = f"\n\n---\n**출처: {source_label}**"
+            if url_lines:
+                source_text += f"\n{url_lines}"
+            _append_source(source_text)
+        elif has_rag_docs:
+            pass  # RAG 문서 검색 시 출처는 문서 자체에 포함되어 있으므로 별도 표시 안 함
+        else:
+            _prepend_notice(
+                "**문서 검색 결과가 없습니다.** "
+                "아래는 AI 모델의 자체 지식을 기반으로 한 답변입니다.\n\n---\n\n"
+            )
+            _append_source(f"\n\n---\n*출처: {model_display} 자체 정보*")
 
     # Generate thread title from first user message (once per thread)
     if _get_db_url() and not response.tool_calls:

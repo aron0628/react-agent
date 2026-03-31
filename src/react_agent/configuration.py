@@ -371,6 +371,13 @@ class Configuration:
         },
     )
 
+    enable_web_search: bool = field(
+        default=True,
+        metadata={
+            "description": "웹검색(Tavily) 활성화 여부. False이면 RAG 검색만 사용.",
+        },
+    )
+
     @classmethod
     def from_runnable_config(cls, config: RunnableConfig) -> Configuration:
         """Create a Configuration instance from a RunnableConfig object."""
