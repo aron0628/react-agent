@@ -51,7 +51,7 @@ async def retrieve_documents(query: str) -> str:
         Formatted string of relevant document excerpts with source info,
         or a message indicating no relevant documents were found.
     """
-    from react_agent.db import get_database_url
+    from react_agent.db import get_database_url, get_user_role
     from react_agent.rag import (
         format_results,
         generate_query_embedding,
@@ -67,6 +67,15 @@ async def retrieve_documents(query: str) -> str:
 
     try:
         db_url = get_database_url()
+
+        # Resolve user role for document ownership filtering
+        user_id = config.user_id
+        user_role = await get_user_role(db_url, user_id)
+        logger.info(
+            "[tool:retrieve_documents] user_id=%r, user_role=%r",
+            user_id,
+            user_role,
+        )
 
         # Generate query embedding
         embedding = await generate_query_embedding(query, config.embedding_model)
@@ -98,6 +107,8 @@ async def retrieve_documents(query: str) -> str:
                     db_url,
                     config.raptor_top_k,
                     config.raptor_max_distance,
+                    user_id=user_id,
+                    user_role=user_role,
                 )
                 logger.info("RAPTOR stage 1: found %d clusters", len(clusters))
 
@@ -131,7 +142,11 @@ async def retrieve_documents(query: str) -> str:
                         all_leaf_chunks: list[dict[str, Any]] = []
                         for job_id, indices in indices_by_job.items():
                             chunks = await search_leaf_chunks_by_indices(
-                                job_id, sorted(indices), db_url
+                                job_id,
+                                sorted(indices),
+                                db_url,
+                                user_id=user_id,
+                                user_role=user_role,
                             )
                             all_leaf_chunks.extend(chunks)
                         if all_leaf_chunks:
@@ -152,10 +167,14 @@ async def retrieve_documents(query: str) -> str:
             if config.enable_raptor:
                 logger.info("RAPTOR fallback to leaf search")
             if config.enable_hybrid_search:
-                results = await _hybrid_search(query, embedding, db_url, config)
+                results = await _hybrid_search(
+                    query, embedding, db_url, config,
+                    user_id=user_id, user_role=user_role,
+                )
             else:
                 results = await search_documents(
-                    embedding, db_url, config.rag_max_results, config.rag_max_distance
+                    embedding, db_url, config.rag_max_results, config.rag_max_distance,
+                    user_id=user_id, user_role=user_role,
                 )
 
         if not results:
@@ -196,10 +215,14 @@ async def retrieve_documents(query: str) -> str:
                 rewritten, config.embedding_model
             )
             if config.enable_hybrid_search:
-                results = await _hybrid_search(rewritten, embedding, db_url, config)
+                results = await _hybrid_search(
+                    rewritten, embedding, db_url, config,
+                    user_id=user_id, user_role=user_role,
+                )
             else:
                 results = await search_documents(
-                    embedding, db_url, config.rag_max_results, config.rag_max_distance
+                    embedding, db_url, config.rag_max_results, config.rag_max_distance,
+                    user_id=user_id, user_role=user_role,
                 )
             if not results:
                 break
@@ -235,6 +258,8 @@ async def _hybrid_search(
     embedding: list[float],
     db_url: str,
     config: Configuration,
+    user_id: str = "",
+    user_role: str = "admin",
 ) -> list[dict[str, Any]]:
     """Dense + BM25 하이브리드 검색을 수행한다.
 
@@ -262,7 +287,8 @@ async def _hybrid_search(
 
     if not query_tokens:
         return await search_documents(
-            embedding, db_url, config.rag_max_results, config.rag_max_distance
+            embedding, db_url, config.rag_max_results, config.rag_max_distance,
+            user_id=user_id, user_role=user_role,
         )
 
     # Dense + BM25 병렬 실행
@@ -270,9 +296,11 @@ async def _hybrid_search(
     sparse_results: list[dict[str, Any]]
     dense_results, sparse_results = await asyncio.gather(
         search_documents(
-            embedding, db_url, config.rag_max_results, config.rag_max_distance
+            embedding, db_url, config.rag_max_results, config.rag_max_distance,
+            user_id=user_id, user_role=user_role,
         ),
-        search_bm25(query_tokens, db_url, config.bm25_top_k),
+        search_bm25(query_tokens, db_url, config.bm25_top_k,
+                     user_id=user_id, user_role=user_role),
     )
 
     if sparse_results:

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Any
 from urllib.parse import quote_plus
+
+logger = logging.getLogger(__name__)
 
 _settings_cache: dict[str, str] = {}
 _cache_timestamp: float = 0.0
@@ -110,6 +113,42 @@ def get_database_url() -> str:
     user = os.environ.get("DB_USER", "app_user")
     password = quote_plus(os.environ.get("DB_PASSWORD", ""))
     return f"postgresql://{user}:{password}@{host}:{port}/{name}"
+
+
+async def get_user_role(db_url: str, user_id: str) -> str:
+    """user_id로 users 테이블에서 role 조회. fail-closed: DB 장애 시 'user' 반환.
+
+    Args:
+        db_url: PostgreSQL connection URL.
+        user_id: The user whose role to look up.
+
+    Returns:
+        The user's role string ('admin', 'user', etc.).
+        Returns 'admin' if user_id is empty (backward compat).
+        Returns 'user' on DB failure or unknown user (fail-closed).
+    """
+    if not user_id:
+        return "admin"  # user_id 없으면 기존 동작 유지 (전체 검색)
+
+    try:
+        import psycopg
+
+        async with await psycopg.AsyncConnection.connect(db_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT role FROM users WHERE user_id = %s AND is_active = true",
+                    (user_id,),
+                )
+                row = await cur.fetchone()
+                if row:
+                    return row[0]
+                return "user"  # 사용자를 못 찾으면 최소 권한
+    except Exception:
+        logger.warning(
+            "Failed to lookup role for user_id=%s, defaulting to 'user'",
+            user_id,
+        )
+        return "user"  # fail-closed
 
 
 async def create_user(

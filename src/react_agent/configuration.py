@@ -18,7 +18,7 @@ _KEY_ALIASES: dict[str, str] = {
 }
 
 # Fields that callers must not override via configurable dict
-_CALLER_BLOCKLIST: set[str] = {"system_prompt", "model", "show_model_name"}
+_CALLER_BLOCKLIST: set[str] = {"system_prompt", "model", "show_model_name", "user_role"}
 
 # Allowlist of valid model identifiers (with and without provider prefix)
 _ALLOWED_MODELS: set[str] = {
@@ -336,6 +336,13 @@ class Configuration:
     show_model_name: bool = field(
         default=True,
         metadata={"description": "채팅 응답에 사용된 모델명 표시 여부."},
+    )
+
+    user_id: str = field(
+        default="",
+        metadata={
+            "description": "현재 사용자 ID. 빈 문자열이면 전체 문서 검색 (admin 동작).",
+        },
     )
 
     enable_hybrid_search: bool = field(

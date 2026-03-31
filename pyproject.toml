@@ -21,6 +21,7 @@ dependencies = [
     "kiwipiepy>=0.18.0",
     "langchain-google-genai>=2.1.0",
     "langchain-xai>=0.2.0",
+    "PyJWT>=2.8.0,<3.0.0",
 ]
 
 

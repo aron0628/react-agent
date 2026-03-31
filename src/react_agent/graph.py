@@ -352,7 +352,10 @@ async def call_model(
                         langgraph_auth_key = os.environ.get("LANGGRAPH_AUTH_KEY", "")
                         headers: dict[str, str] = {}
                         if langgraph_auth_key:
-                            headers["Authorization"] = f"Bearer {langgraph_auth_key}"
+                            from react_agent.auth import mint_service_jwt
+
+                            service_token = mint_service_jwt(langgraph_auth_key)
+                            headers["Authorization"] = f"Bearer {service_token}"
 
                         if _UUID_RE.match(thread_id):
                             async with httpx.AsyncClient() as http_client:

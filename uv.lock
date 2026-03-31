@@ -2307,6 +2307,7 @@ dependencies = [
     { name = "langchain-xai" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-postgres" },
+    { name = "pyjwt" },
     { name = "python-dotenv" },
     { name = "tiktoken" },
 ]
@@ -2337,6 +2338,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=0.6.10" },
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.0.0,<4.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.1" },
+    { name = "pyjwt", specifier = ">=2.8.0,<3.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.1" },
     { name = "tiktoken", specifier = ">=0.7.0" },

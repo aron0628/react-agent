@@ -76,6 +76,8 @@ async def search_documents(
     db_url: str,
     top_k: int,
     max_distance: float,
+    user_id: str = "",
+    user_role: str = "admin",
 ) -> list[dict[str, Any]]:
     """Search document_embeddings table using pgvector cosine distance.
 
@@ -84,6 +86,8 @@ async def search_documents(
         db_url: PostgreSQL connection URL.
         top_k: Maximum number of results to return.
         max_distance: Maximum cosine distance threshold.
+        user_id: Current user ID for ownership filtering.
+        user_role: User role ('admin' skips filtering).
 
     Returns:
         A list of document dicts with content, metadata, and distance.
@@ -93,6 +97,18 @@ async def search_documents(
 
     embedding_str = str(query_embedding)
 
+    where_clauses = [
+        "(de.embedding <=> %s::vector) < %s",
+        "de.element_type IN ('text', 'table')",
+    ]
+    params: list[Any] = [embedding_str, embedding_str, max_distance]
+
+    if user_role != "admin" and user_id:
+        where_clauses.append("f.owner_id = %s")
+        params.append(user_id)
+
+    params.append(top_k)
+
     sql = (
         "SELECT de.id, de.job_id, de.element_index, de.page, de.element_type, "
         "de.content, de.metadata, de.chunk_index, "
@@ -101,8 +117,7 @@ async def search_documents(
         "FROM document_embeddings de "
         "JOIN parse_jobs pj ON de.job_id = pj.parser_job_id "
         "JOIN files f ON pj.file_id = f.id "
-        "WHERE (de.embedding <=> %s::vector) < %s "
-        "AND de.element_type IN ('text', 'table') "
+        "WHERE " + " AND ".join(where_clauses) + " "
         "ORDER BY distance ASC "
         "LIMIT %s"
     )
@@ -110,9 +125,7 @@ async def search_documents(
     async with await psycopg.AsyncConnection.connect(
         db_url, row_factory=dict_row
     ) as conn:
-        cursor = await conn.execute(
-            sql, (embedding_str, embedding_str, max_distance, top_k)
-        )
+        cursor = await conn.execute(sql, params)
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
@@ -122,6 +135,8 @@ async def search_raptor_summaries(
     db_url: str,
     top_k: int,
     max_distance: float,
+    user_id: str = "",
+    user_role: str = "admin",
 ) -> list[dict[str, Any]]:
     """Search raptor_summaries table for relevant cluster summaries.
 
@@ -133,6 +148,8 @@ async def search_raptor_summaries(
         db_url: PostgreSQL connection URL.
         top_k: Maximum number of summary clusters to return.
         max_distance: Maximum cosine distance threshold.
+        user_id: Current user ID for ownership filtering.
+        user_role: User role ('admin' skips filtering).
 
     Returns:
         A list of summary dicts with job_id, raptor_level, cluster_id,
@@ -143,11 +160,28 @@ async def search_raptor_summaries(
 
     embedding_str = str(query_embedding)
 
+    where_clauses = [
+        "(rs.embedding <=> %s::vector) < %s",
+    ]
+    params: list[Any] = [embedding_str, embedding_str, max_distance]
+
+    join_clause = ""
+    if user_role != "admin" and user_id:
+        join_clause = (
+            "JOIN parse_jobs pj ON rs.job_id = pj.parser_job_id "
+            "JOIN files f ON pj.file_id = f.id "
+        )
+        where_clauses.append("f.owner_id = %s")
+        params.append(user_id)
+
+    params.append(top_k)
+
     sql = (
         "SELECT rs.job_id, rs.raptor_level, rs.cluster_id, rs.content, "
         "rs.metadata, (rs.embedding <=> %s::vector) AS distance "
         "FROM raptor_summaries rs "
-        "WHERE (rs.embedding <=> %s::vector) < %s "
+        + join_clause
+        + "WHERE " + " AND ".join(where_clauses) + " "
         "ORDER BY distance ASC "
         "LIMIT %s"
     )
@@ -155,9 +189,7 @@ async def search_raptor_summaries(
     async with await psycopg.AsyncConnection.connect(
         db_url, row_factory=dict_row
     ) as conn:
-        cursor = await conn.execute(
-            sql, (embedding_str, embedding_str, max_distance, top_k)
-        )
+        cursor = await conn.execute(sql, params)
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
@@ -166,6 +198,8 @@ async def search_leaf_chunks_by_indices(
     job_id: str,
     element_indices: list[int],
     db_url: str,
+    user_id: str = "",
+    user_role: str = "admin",
 ) -> list[dict[str, Any]]:
     """Fetch specific leaf chunks by element indices from a RAPTOR cluster.
 
@@ -177,6 +211,8 @@ async def search_leaf_chunks_by_indices(
         job_id: The parsing job identifier.
         element_indices: List of element_index values to retrieve.
         db_url: PostgreSQL connection URL.
+        user_id: Current user ID for ownership filtering.
+        user_role: User role ('admin' skips filtering).
 
     Returns:
         A list of document dicts compatible with grade_documents() and
@@ -186,6 +222,17 @@ async def search_leaf_chunks_by_indices(
     import psycopg
     from psycopg.rows import dict_row
 
+    where_clauses = [
+        "de.job_id = %s",
+        "de.element_index = ANY(%s)",
+        "de.element_type IN ('text', 'table')",
+    ]
+    params: list[Any] = [job_id, element_indices]
+
+    if user_role != "admin" and user_id:
+        where_clauses.append("f.owner_id = %s")
+        params.append(user_id)
+
     sql = (
         "SELECT de.id, de.job_id, de.element_index, de.page, de.element_type, "
         "de.content, de.metadata, de.chunk_index, "
@@ -193,16 +240,14 @@ async def search_leaf_chunks_by_indices(
         "FROM document_embeddings de "
         "JOIN parse_jobs pj ON de.job_id = pj.parser_job_id "
         "JOIN files f ON pj.file_id = f.id "
-        "WHERE de.job_id = %s "
-        "AND de.element_index = ANY(%s) "
-        "AND de.element_type IN ('text', 'table') "
+        "WHERE " + " AND ".join(where_clauses) + " "
         "ORDER BY de.element_index ASC"
     )
 
     async with await psycopg.AsyncConnection.connect(
         db_url, row_factory=dict_row
     ) as conn:
-        cursor = await conn.execute(sql, (job_id, element_indices))
+        cursor = await conn.execute(sql, params)
         rows = await cursor.fetchall()
         return [{**dict(row), "distance": 0.0} for row in rows]
 
@@ -443,6 +488,8 @@ async def search_bm25(
     query_tokens: list[str],
     db_url: str,
     top_k: int = 20,
+    user_id: str = "",
+    user_role: str = "admin",
 ) -> list[dict[str, Any]]:
     """BM25 키워드 검색을 수행한다.
 
@@ -454,6 +501,8 @@ async def search_bm25(
         query_tokens: 형태소 분석된 쿼리 키워드 리스트.
         db_url: PostgreSQL 연결 URL.
         top_k: 반환할 최대 결과 수.
+        user_id: 현재 사용자 ID (소유권 필터링).
+        user_role: 사용자 역할 ('admin'이면 필터 생략).
 
     Returns:
         BM25 점수 기준 내림차순 정렬된 문서 딕셔너리 리스트.
@@ -489,7 +538,18 @@ async def search_bm25(
                 df_row = await cursor.fetchone()
                 df_map[token] = df_row["cnt"] if df_row else 0
 
-            # 매칭 문서 조회
+            # 매칭 문서 조회 (user scoping)
+            owner_join = ""
+            owner_where = ""
+            owner_params: list[Any] = []
+            if user_role != "admin" and user_id:
+                owner_join = (
+                    "JOIN parse_jobs pj ON dk.job_id = pj.parser_job_id "
+                    "JOIN files f ON pj.file_id = f.id "
+                )
+                owner_where = "AND f.owner_id = %s "
+                owner_params = [user_id]
+
             cursor = await conn.execute(
                 "SELECT dk.job_id, dk.element_index, dk.page, "
                 "dk.keywords, dk.tf_scores, "
@@ -497,8 +557,10 @@ async def search_bm25(
                 "FROM document_keywords dk "
                 "JOIN document_embeddings de ON dk.job_id = de.job_id "
                 "AND dk.element_index = de.parent_element_index "
-                "WHERE dk.keywords && %s::text[]",
-                (query_tokens,),
+                + owner_join
+                + "WHERE dk.keywords && %s::text[] "
+                + owner_where,
+                [query_tokens] + owner_params,
             )
             rows = await cursor.fetchall()
 
